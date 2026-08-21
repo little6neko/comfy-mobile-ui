@@ -25,6 +25,7 @@ import { WidgetValueEditor } from '@/components/controls/WidgetValueEditor';
 import { VideoPreviewSection } from '@/components/media/VideoPreviewSection';
 import { InlineImagePreview } from '@/components/media/InlineImagePreview';
 import { PointEditor } from '@/components/controls/widgets/custom_node_widget/PointEditor';
+import { FramesEditorLauncher } from '@/features/frames-editor';
 import { detectParameterTypeForGallery } from '@/shared/utils/GalleryPermissionUtils';
 
 interface NodeBounds {
@@ -48,6 +49,7 @@ interface UploadState {
 }
 
 interface NodeDetailModalProps {
+    workflowId: string;
     selectedNode: ComfyGraphNode;
     nodeMetadata: Map<number, INodeWithMetadata>;
     metadataLoading: boolean;
@@ -109,6 +111,7 @@ interface NodeDetailModalProps {
 }
 
 export const NodeDetailModal: React.FC<NodeDetailModalProps> = ({
+    workflowId,
     selectedNode,
     nodeMetadata,
     metadataLoading,
@@ -504,6 +507,7 @@ export const NodeDetailModal: React.FC<NodeDetailModalProps> = ({
     const renderParameterSection = (title: string, params: IProcessedParameter[], icon?: React.ReactNode, isWidgetValues: boolean = false) => {
         if (!params || params.length === 0) return null;
         const isPointsEditor = selectedNode.type === 'PointsEditor';
+        const isFramesEditor = selectedNode.type === 'easy framesEditor' && Boolean(metadata);
         const readonlyParams = isPointsEditor ? ['points_store', 'coordinates', 'neg_coordinates'] : [];
         const filteredParams = isPointsEditor ? params.filter(param => !readonlyParams.includes(param.name)) : params;
 
@@ -526,7 +530,15 @@ export const NodeDetailModal: React.FC<NodeDetailModalProps> = ({
                 <div className="grid grid-cols-1 gap-2">
                     {filteredParams.map((param, index) => (
                         <div key={`${param.name}-${index}`} className="group relative">
-                            {isWidgetValues && selectedNode ? (
+                            {isWidgetValues && isFramesEditor && param.name === 'info' && setWidgetValue ? (
+                                <FramesEditorLauncher
+                                    workflowId={workflowId}
+                                    nodeId={nodeId}
+                                    currentValue={getWidgetValue(nodeId, param.name, param.value)}
+                                    isModified={isWidgetModified(param.name)}
+                                    onCommit={(value) => setWidgetValue(nodeId, 'info', value)}
+                                />
+                            ) : isWidgetValues && selectedNode ? (
                                 isInputConnected(param.name) ? (
                                     <div className={`flex items-center justify-between px-2.5 py-2 rounded-lg border ${hasCustomColor ? 'bg-black/10 border-white/10 text-white' : 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900'}`}>
                                         <div className="flex items-center space-x-2">

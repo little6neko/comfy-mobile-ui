@@ -4133,6 +4133,7 @@ const WorkflowEditor: React.FC = () => {
       {/* Selected Node Panel (Now NodeDetailModal) */}
       {isNodePanelVisible && selectedNode && (
         <NodeDetailModal
+          workflowId={id || ''}
           selectedNode={selectedNode as any}
           nodeMetadata={nodeMetadata}
           metadataLoading={metadataLoading}
@@ -4364,5 +4365,4 @@ const WorkflowEditor: React.FC = () => {
 };
 
 export default WorkflowEditor;
-
 

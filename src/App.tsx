@@ -28,6 +28,7 @@ import { PromptHistory } from '@/components/history/PromptHistory';
 import { WorkflowStackPage } from '@/components/workflow/WorkflowStackPage';
 import { AppUpdate } from '@/components/server/AppUpdate';
 import CanvasLabPage from '@/components/canvas/CanvasLabPage';
+import { FramesEditorPreviewBridge } from '@/features/frames-editor/FramesEditorPreviewBridge';
 
 // Canvas-mode gate: switching Mobile <-> Official remounts the whole editor.
 // Mode switching is data-driven — storage is the only boundary — so entering
@@ -209,6 +210,7 @@ const AppRouter: React.FC = () => {
 
   return (
     <>
+      <FramesEditorPreviewBridge />
       <Routes>
         <Route path="/" element={<WorkflowList />} />
         <Route path="/workflow/:id" element={<WorkflowEditorRoute />} />

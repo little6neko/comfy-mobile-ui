@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ArrowRight, Layers, ExternalLink, Loader2, Play, VolumeX, Shuffle, ListOrdered, LayoutGrid, ChevronDown, ChevronUp, ChevronRight, Square, X } from 'lucide-react';
 import { ComfyGraphNode } from '@/core/domain/ComfyGraphNode';
 import { WidgetValueEditor } from '@/components/controls/WidgetValueEditor';
+import { FramesEditorLauncher } from '@/features/frames-editor';
 import { useWidgetValueEditor } from '@/hooks/useWidgetValueEditor';
 import { IProcessedParameter } from '@/shared/types/comfy/IComfyObjectInfo';
 import { detectParameterTypeForGallery } from '@/shared/utils/GalleryPermissionUtils';
@@ -108,13 +109,14 @@ interface WorkflowStackEditorProps {
 
 interface StackNodeProps {
     node: ComfyGraphNode;
+    workflowId: string;
     widgetEditor: any; // Return type of useWidgetValueEditor
     onModeChange?: (nodeId: number, mode: number) => void;
     globalExpandAction?: 'expand' | 'collapse' | null;
     executingNodeId?: string | null;
 }
 
-const StackNode: React.FC<StackNodeProps> = ({ node, widgetEditor, onModeChange, globalExpandAction, executingNodeId }) => {
+const StackNode: React.FC<StackNodeProps> = ({ node, workflowId, widgetEditor, onModeChange, globalExpandAction, executingNodeId }) => {
     const { t } = useTranslation();
 
     const widgets = useMemo(() => {
@@ -341,6 +343,24 @@ const StackNode: React.FC<StackNodeProps> = ({ node, widgetEditor, onModeChange,
                             {widgets.length > 0 && (
                                 <div className="flex flex-col gap-2 mt-1 border-t border-white/5 pt-3">
                                     {widgets.map((param, index) => {
+                                        if (
+                                            node.type === 'easy framesEditor'
+                                            && Boolean(node.nodeData)
+                                            && param.name === 'info'
+                                        ) {
+                                            return (
+                                                <div key={`${param.name}-${index}`} className="w-full">
+                                                    <FramesEditorLauncher
+                                                        workflowId={workflowId}
+                                                        nodeId={node.id}
+                                                        currentValue={getWidgetValue(node.id, param.name, param.value)}
+                                                        isModified={isWidgetModified(param.name)}
+                                                        onCommit={(value) => setWidgetValue(node.id, 'info', value)}
+                                                    />
+                                                </div>
+                                            );
+                                        }
+
                                         if (isInputConnected(param.name)) {
                                             return (
                                                 <div key={`${param.name}-${index}`} className="flex items-center justify-between p-2 rounded-lg bg-black/10 border border-white/10 text-white">
@@ -1018,6 +1038,7 @@ export const WorkflowStackEditor: React.FC<WorkflowStackEditorProps> = ({ graph,
                                                         <StackNode
                                                             key={node.id}
                                                             node={nodeInstance as ComfyGraphNode}
+                                                            workflowId={id || 'stack-editor'}
                                                             widgetEditor={widgetEditor}
                                                             globalExpandAction={globalExpandAction}
                                                             executingNodeId={executingNodeId}
