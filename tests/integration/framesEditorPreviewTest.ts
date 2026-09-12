@@ -129,4 +129,29 @@ state = reduceFramesEditorPreviewModel(state, { type: 'clear_all' });
 assert.equal(getFramesEditorPreview(state, 'workflow-a', '12'), undefined);
 assert.equal(Object.keys(state.promptWorkflows).length, 0);
 
+state = reduceFramesEditorPreviewModel(state, {
+  type: 'node_executed', promptId: 'cached', nodeId: '12', output: readyOutput('replayed.png'),
+});
+assert.equal(getFramesEditorPreview(state, 'workflow-a', '12'), undefined,
+  'replayed outputs must not appear before a new user submission');
+state = reduceFramesEditorPreviewModel(state, {
+  type: 'register_prompt', promptId: 'cached', workflowId: 'workflow-a',
+});
+state = reduceFramesEditorPreviewModel(state, {
+  type: 'node_executed', promptId: 'cached', nodeId: '12', output: readyOutput('cached.png'),
+});
+assert.equal(getFramesEditorPreview(state, 'workflow-a', '12')?.frames[0].filename, 'cached.png',
+  'cached output must display without an executing event');
+state = reduceFramesEditorPreviewModel(state, {
+  type: 'register_prompt', promptId: 'cached-again', workflowId: 'workflow-a',
+});
+state = reduceFramesEditorPreviewModel(state, {
+  type: 'node_executed', promptId: 'cached-again', nodeId: '12', output: readyOutput('new-cache.png'),
+});
+state = reduceFramesEditorPreviewModel(state, {
+  type: 'node_executed', promptId: 'cached', nodeId: '12', output: readyOutput('late.png'),
+});
+assert.equal(getFramesEditorPreview(state, 'workflow-a', '12')?.frames[0].filename, 'new-cache.png',
+  'a late old output must not overwrite the newer cached result');
+
 console.log('Frames Editor preview tests passed');

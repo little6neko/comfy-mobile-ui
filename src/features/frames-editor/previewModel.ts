@@ -24,6 +24,7 @@ export interface FramesEditorNodePreview {
 
 export interface FramesEditorPreviewModel {
   promptWorkflows: Record<string, string>;
+  promptRevisions: Record<string, number>;
   nodePreviews: Record<string, FramesEditorNodePreview>;
   revisionCounter: number;
 }
@@ -61,6 +62,7 @@ export const createFramesEditorPreviewKey = (
 
 export const createFramesEditorPreviewModel = (): FramesEditorPreviewModel => ({
   promptWorkflows: {},
+  promptRevisions: {},
   nodePreviews: {},
   revisionCounter: 0,
 });
@@ -128,8 +130,14 @@ export const reduceFramesEditorPreviewModel = (
   switch (action.type) {
     case 'register_prompt': {
       if (!action.promptId || !action.workflowId) return model;
+      if (model.promptWorkflows[action.promptId]) return model;
       return {
         ...model,
+        revisionCounter: model.revisionCounter + 1,
+        promptRevisions: {
+          ...model.promptRevisions,
+          [action.promptId]: model.revisionCounter + 1,
+        },
         promptWorkflows: {
           ...model.promptWorkflows,
           [action.promptId]: action.workflowId,
@@ -141,6 +149,10 @@ export const reduceFramesEditorPreviewModel = (
       if (!workflowId) return model;
       const revision = model.revisionCounter + 1;
       const key = createFramesEditorPreviewKey(workflowId, action.nodeId);
+      const current = model.nodePreviews[key];
+      if (current && model.promptRevisions[current.activePromptId] > model.promptRevisions[action.promptId]) {
+        return model;
+      }
       return {
         ...model,
         revisionCounter: revision,
@@ -162,9 +174,14 @@ export const reduceFramesEditorPreviewModel = (
       if (!workflowId) return model;
       const key = createFramesEditorPreviewKey(workflowId, action.nodeId);
       const currentPreview = model.nodePreviews[key];
-      if (!currentPreview || currentPreview.activePromptId !== action.promptId) {
+      if (currentPreview && model.promptRevisions[currentPreview.activePromptId] > model.promptRevisions[action.promptId]) {
         return model;
       }
+
+      // ComfyUI emits cached UI outputs without a preceding `executing` event.
+      // A registered live submission is sufficient; unrelated node outputs
+      // and pre-refresh/reconnected history still cannot create a preview.
+      if (!isRecord(action.output) || !('preview' in action.output)) return model;
 
       const parsed = parseFramesEditorExecutionOutput(action.output);
       const revision = model.revisionCounter + 1;
