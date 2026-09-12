@@ -410,6 +410,10 @@
         "clearSearch": "清除搜索"
     },
     "node": {
+        "executeToNode": "执行到该节点（包含上游依赖）",
+        "executionSubmitting": "正在提交执行…",
+        "executionQueued": "该节点已加入执行队列",
+        "executeTargetUnavailable": "当前执行图中找不到可执行的目标输出节点，请检查节点模式及连接。",
         "copySuccess": "节点已复制到剪贴板",
         "copySuccessDesc": "您可以从添加节点菜单粘贴它",
         "copyError": "复制节点失败",
@@ -683,6 +687,9 @@
         "loadingPreview": "正在加载预览...",
         "downloadingFile": "正在下载 {{filename}}",
         "previewFailed": "预览失败",
+        "absolutePathRequiresVhs": "绝对路径只能在 VHS 路径控件中预览。",
+        "invalidPreviewPath": "预览路径无效。",
+        "vhsPathPreviewFailed": "VHS 无法预览该路径，请确认文件存在且 VideoHelperSuite 有权访问。",
         "videoNotSupported": "您的浏览器不支持视频元素。",
         "fileSizes": {
             "bytes": "字节",

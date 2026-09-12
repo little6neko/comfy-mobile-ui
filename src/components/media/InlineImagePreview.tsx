@@ -3,6 +3,7 @@ import { Image, AlertCircle } from 'lucide-react';
 import { ComfyFileService } from '@/infrastructure/api/ComfyFileService';
 import { useConnectionStore } from '@/ui/store/connectionStore';
 import { useTranslation } from 'react-i18next';
+import { resolveFilePreviewReference } from '@/shared/utils/FilePreviewResolver';
 
 interface ImagePreviewData {
   filename?: string;
@@ -14,6 +15,7 @@ interface InlineImagePreviewProps {
   imagePreview: ImagePreviewData | string;
   onClick: () => void;
   isFromExecution?: boolean; // true if from workflow execution output
+  allowVhsPath?: boolean;
   themeOverride?: {
     container?: string;
     text?: string;
@@ -25,22 +27,27 @@ export const InlineImagePreview: React.FC<InlineImagePreviewProps> = ({
   imagePreview,
   onClick,
   isFromExecution = false,
+  allowVhsPath = false,
   themeOverride
 }) => {
   const { t } = useTranslation();
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isVhsPathPreview, setIsVhsPathPreview] = useState(false);
   const { url: serverUrl } = useConnectionStore();
 
   useEffect(() => {
-    let currentUrl: string | null = null;
+    let objectUrl: string | null = null;
+    let cancelled = false;
 
     const loadImage = async () => {
       if (!imagePreview) return;
 
       setLoading(true);
       setError(null);
+      setImageUrl(null);
+      setIsVhsPathPreview(false);
 
       try {
         const serverUrlToUse = serverUrl || 'http://localhost:8188';
@@ -53,87 +60,94 @@ export const InlineImagePreview: React.FC<InlineImagePreviewProps> = ({
           throw new Error('Invalid filename');
         }
 
-        // Parse filename and subfolder
-        let actualFilename: string;
-        let subfolder: string = '';
-
-        if (rawFilename.includes('/')) {
-          const lastSlashIndex = rawFilename.lastIndexOf('/');
-          subfolder = rawFilename.substring(0, lastSlashIndex);
-          actualFilename = rawFilename.substring(lastSlashIndex + 1);
-        } else {
-          actualFilename = rawFilename;
-        }
-
-        console.log('📂 [InlineImagePreview] Parsed:', {
-          actualFilename,
-          subfolder,
-          originalPath: rawFilename,
-          isFromExecution
+        const previewReference = resolveFilePreviewReference(rawFilename, {
+          allowVhsPath,
+          explicitType:
+            isFromExecution && typeof imagePreview === 'object'
+              ? imagePreview.type
+              : undefined,
+          explicitSubfolder:
+            isFromExecution && typeof imagePreview === 'object'
+              ? imagePreview.subfolder
+              : undefined,
         });
 
-        // Determine the correct type based on context
-        let locations: Array<{ type: string; subfolder: string }>;
+        if (!previewReference.ok) {
+          const message = previewReference.error === 'absolute_path_requires_vhs'
+            ? t('media.absolutePathRequiresVhs')
+            : t('media.invalidPreviewPath');
+          throw new Error(message);
+        }
 
-        if (isFromExecution && typeof imagePreview === 'object' && imagePreview.type) {
-          // From execution output - use the type specified in params
-          locations = [
-            { type: imagePreview.type, subfolder: imagePreview.subfolder || subfolder }
-          ];
-        } else {
-          // From widget parameter - always use 'input'
-          locations = [
-            { type: 'input', subfolder }
-          ];
+        const vhsPathTarget = previewReference.targets.find(
+          (target) => target.kind === 'vhs-path'
+        );
+
+        if (vhsPathTarget?.kind === 'vhs-path') {
+          if (!cancelled) {
+            setIsVhsPathPreview(true);
+            setImageUrl(
+              fileService.createVhsPathPreviewUrl(
+                vhsPathTarget.filename,
+                vhsPathTarget.format
+              )
+            );
+          }
+          return;
         }
 
         let blob: Blob | null = null;
-        let successLocation: string | null = null;
 
-        for (const location of locations) {
-          const requestUrl = `${serverUrlToUse}/view?filename=${encodeURIComponent(actualFilename)}&type=${location.type}${location.subfolder ? `&subfolder=${encodeURIComponent(location.subfolder)}` : ''}`;
-
+        for (const target of previewReference.targets) {
+          if (target.kind !== 'comfy') continue;
           try {
             blob = await fileService.downloadFile({
-              filename: actualFilename,
-              type: location.type,
-              subfolder: location.subfolder
+              filename: target.filename,
+              type: target.type,
+              subfolder: target.subfolder
             });
 
             if (blob && blob.size > 0) {
-              successLocation = `${location.type}/${location.subfolder || '(root)'}`;
               break;
-            } else {
             }
-          } catch (error) {
+          } catch {
             continue;
           }
         }
 
         if (blob && blob.size > 0) {
           const url = URL.createObjectURL(blob);
-          currentUrl = url;
-          setImageUrl(url);
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          objectUrl = url;
+          setImageUrl(objectUrl);
         } else {
           console.error('❌ [InlineImagePreview] Image not found in any location');
           throw new Error('Image not found');
         }
       } catch (err) {
         console.error('💥 [InlineImagePreview] Failed to load inline image preview:', err);
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Unknown error');
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
     loadImage();
 
     return () => {
-      if (currentUrl) {
-        URL.revokeObjectURL(currentUrl);
+      cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [imagePreview, serverUrl, isFromExecution]);
+  }, [allowVhsPath, imagePreview, serverUrl, isFromExecution, t]);
 
   if (loading) {
     return (
@@ -158,6 +172,9 @@ export const InlineImagePreview: React.FC<InlineImagePreviewProps> = ({
         <div className="text-center">
           <AlertCircle className="w-8 h-8 text-red-600 dark:text-red-400 mx-auto mb-2" />
           <p className="text-sm text-red-700 dark:text-red-300">{t('media.failedToLoad')}</p>
+          {error && (
+            <p className="text-xs text-red-600 dark:text-red-400 px-3 line-clamp-2">{error}</p>
+          )}
           <p className="text-xs text-red-600 dark:text-red-400">{t('media.clickToRetry')}</p>
         </div>
       </div>
@@ -170,12 +187,26 @@ export const InlineImagePreview: React.FC<InlineImagePreviewProps> = ({
       onClick={onClick}
     >
       <div className="relative">
-        <img
-          src={imageUrl}
-          alt={typeof imagePreview === 'string' ? imagePreview : (imagePreview.filename || t('media.preview'))}
- className="w-full max-h-48 object-contain"
-          onError={() => setError(t('media.failedToDisplayImage'))}
-        />
+        {isVhsPathPreview ? (
+          <video
+            src={imageUrl}
+            className="w-full max-h-48 object-contain"
+            preload="auto"
+            autoPlay
+            loop
+            muted
+            playsInline
+            controls={false}
+            onError={() => setError(t('media.vhsPathPreviewFailed'))}
+          />
+        ) : (
+          <img
+            src={imageUrl}
+            alt={typeof imagePreview === 'string' ? imagePreview : (imagePreview.filename || t('media.preview'))}
+            className="w-full max-h-48 object-contain"
+            onError={() => setError(t('media.failedToDisplayImage'))}
+          />
+        )}
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
           <div className="bg-white/90 rounded-full p-2">
             <Image className="w-5 h-5 text-[#c8ccd4]" />

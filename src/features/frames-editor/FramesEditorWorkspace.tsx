@@ -10,6 +10,7 @@ import {
   Redo2,
   RefreshCw,
   Square,
+  StepForward,
   Trash2,
   Undo2,
   X,
@@ -37,6 +38,9 @@ interface FramesEditorWorkspaceProps {
   currentValue: unknown;
   preview?: FramesEditorNodePreview;
   onCommit: (value: string) => void;
+  onExecute?: (value: string) => void;
+  canExecute?: boolean;
+  isSubmitting?: boolean;
   onClose: () => void;
 }
 
@@ -83,6 +87,9 @@ export const FramesEditorWorkspace = ({
   currentValue,
   preview,
   onCommit,
+  onExecute,
+  canExecute = false,
+  isSubmitting = false,
   onClose,
 }: FramesEditorWorkspaceProps) => {
   const { t } = useTranslation();
@@ -217,6 +224,16 @@ export const FramesEditorWorkspace = ({
     setWasReset(true);
   };
 
+  const handleExecute = () => {
+    if (!infoIsValid || !canExecute || isSubmitting || !onExecute) return;
+    const value = serializeFramesEditorInfo(draftInfo);
+    onCommit(value);
+    onExecute(value);
+    // Execution applies the draft to the node and leaves this workspace open.
+    baselineSerialized.current = value;
+    setWasReset(false);
+  };
+
   const previewNotice = preview?.isInit || previewUpdated;
 
   return createPortal(
@@ -246,6 +263,19 @@ export const FramesEditorWorkspace = ({
             })}
           </p>
         </div>
+        {onExecute && (
+          <button
+            type="button"
+            onClick={handleExecute}
+            disabled={!infoIsValid || !canExecute || isSubmitting}
+            aria-label={t(isSubmitting ? 'node.executionSubmitting' : 'node.executeToNode')}
+            title={t(isSubmitting ? 'node.executionSubmitting' : 'node.executeToNode')}
+            aria-busy={isSubmitting}
+            className="flex h-11 min-w-11 shrink-0 items-center justify-center rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-3 text-emerald-300 hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-35"
+          >
+            {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <StepForward className="h-5 w-5" />}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleCommit}

@@ -108,6 +108,9 @@ interface WorkflowStackEditorProps {
 }
 
 interface StackNodeProps {
+    onExecuteNode?: (nodeId: number, widgetOverrides?: Record<string, unknown>) => void;
+    canExecute?: boolean;
+    submittingNodeId?: number | null;
     node: ComfyGraphNode;
     workflowId: string;
     widgetEditor: any; // Return type of useWidgetValueEditor
@@ -116,7 +119,7 @@ interface StackNodeProps {
     executingNodeId?: string | null;
 }
 
-const StackNode: React.FC<StackNodeProps> = ({ node, workflowId, widgetEditor, onModeChange, globalExpandAction, executingNodeId }) => {
+const StackNode: React.FC<StackNodeProps> = ({ node, workflowId, widgetEditor, onModeChange, globalExpandAction, executingNodeId, onExecuteNode, canExecute, submittingNodeId }) => {
     const { t } = useTranslation();
 
     const widgets = useMemo(() => {
@@ -356,6 +359,9 @@ const StackNode: React.FC<StackNodeProps> = ({ node, workflowId, widgetEditor, o
                                                         currentValue={getWidgetValue(node.id, param.name, param.value)}
                                                         isModified={isWidgetModified(param.name)}
                                                         onCommit={(value) => setWidgetValue(node.id, 'info', value)}
+                                                        onExecute={onExecuteNode ? (value) => onExecuteNode(node.id, { info: value }) : undefined}
+                                                        canExecute={canExecute && currentMode === 0}
+                                                        isSubmitting={submittingNodeId === node.id}
                                                     />
                                                 </div>
                                             );
@@ -400,7 +406,7 @@ const StackNode: React.FC<StackNodeProps> = ({ node, workflowId, widgetEditor, o
                                                     onSaveEditing={saveEditingParam}
                                                     onEditingValueChange={updateEditingValue}
                                                     onControlAfterGenerateChange={onControlAfterGenerateChange}
-                                                    onFilePreview={(filename) => fileOperations.handleFilePreview(filename)}
+                                                    onFilePreview={(filename, options) => fileOperations.handleFilePreview(filename, options)}
                                                     onFileUpload={(nid, pname) => fileOperations.handleFileUpload(nid, pname, fileInputRef)}
                                                     onFileUploadDirect={fileOperations.handleFileUploadDirect}
                                                     node={node}
@@ -445,8 +451,9 @@ const StackNode: React.FC<StackNodeProps> = ({ node, workflowId, widgetEditor, o
                                 loading={fileOperations.previewModal.loading}
                                 error={fileOperations.previewModal.error}
                                 url={fileOperations.previewModal.url}
+                                isVhsPathPreview={fileOperations.previewModal.isVhsPathPreview}
                                 onClose={fileOperations.closePreview}
-                                onRetry={fileOperations.handleFilePreview}
+                                onRetry={fileOperations.retryFilePreview}
                             />
                         </motion.div>
                     )}
@@ -465,6 +472,8 @@ export const WorkflowStackEditor: React.FC<WorkflowStackEditorProps> = ({ graph,
     const [globalExpandAction, setGlobalExpandAction] = useState<'expand' | 'collapse' | null>(null);
     const [, setUpdateCounter] = useState(0);
     const [isExecuting, setIsExecuting] = useState(false);
+    const executionSubmittingRef = useRef(false);
+    const [submittingNodeId, setSubmittingNodeId] = useState<number | null>(null);
     const [queueRefreshTrigger, setQueueRefreshTrigger] = useState(0);
     const [executingNodeId, setExecutingNodeId] = useState<string | null>(null);
     const currentPromptIdRef = useRef<string | null>(null);
@@ -555,18 +564,30 @@ export const WorkflowStackEditor: React.FC<WorkflowStackEditorProps> = ({ graph,
         processor
     });
 
-    const handleExecute = async () => {
+    const handleExecute = async (targetNodeId?: number, widgetOverrides?: Record<string, unknown>) => {
+        if (executionSubmittingRef.current) return;
         if (!graph || !isConnected) {
             toast.error(t('workflow.submitFailed'));
             return;
         }
 
         try {
+            executionSubmittingRef.current = true;
             setIsExecuting(true);
+            setSubmittingNodeId(targetNodeId ?? null);
 
             // Use a local modifications map to capture changes immediately (including seeds)
             // This is necessary because widgetEditor.modifiedWidgetValues (state) won't update until next render
             const currentModifications = new Map(widgetEditor.modifiedWidgetValues);
+            if (targetNodeId !== undefined && widgetOverrides) {
+                currentModifications.set(targetNodeId, {
+                    ...currentModifications.get(targetNodeId),
+                    ...widgetOverrides,
+                });
+                Object.entries(widgetOverrides).forEach(([name, value]) => {
+                    widgetEditor.setWidgetValue(targetNodeId, name, value);
+                });
+            }
 
             try {
                 // Get node metadata (injected in WorkflowStackPage)
@@ -609,20 +630,33 @@ export const WorkflowStackEditor: React.FC<WorkflowStackEditorProps> = ({ graph,
             const executionGraph = createExecutionGraph(graph, currentModifications);
             const { apiWorkflow } = convertGraphToAPI(executionGraph);
 
+            if (targetNodeId !== undefined) {
+                const target = apiWorkflow[String(targetNodeId)];
+                if (!target || !(graph as any)._metadata?.[target.class_type]?.output_node) {
+                    throw new Error(t('node.executeTargetUnavailable'));
+                }
+            }
+
             const promptId = await ComfyUIService.executeWorkflow({
                 prompt: apiWorkflow,
                 workflow: serializeGraph(executionGraph),
             }, {
+                partialExecutionTargets: targetNodeId === undefined ? undefined : [String(targetNodeId)],
                 workflowId: id || 'stack-editor',
                 workflowName: workflowName || t('workflow.newWorkflowName')
             });
 
             currentPromptIdRef.current = promptId;
+            if (targetNodeId !== undefined) toast.success(t('node.executionQueued'));
         } catch (error) {
             console.error('Workflow execution failed:', error);
-            toast.error(t('workflow.submitFailed'));
+            toast.error(t('workflow.submitFailed'), {
+                description: error instanceof Error ? error.message : undefined,
+            });
         } finally {
+            executionSubmittingRef.current = false;
             setIsExecuting(false);
+            setSubmittingNodeId(null);
         }
     };
 
@@ -1040,6 +1074,9 @@ export const WorkflowStackEditor: React.FC<WorkflowStackEditorProps> = ({ graph,
                                                             node={nodeInstance as ComfyGraphNode}
                                                             workflowId={id || 'stack-editor'}
                                                             widgetEditor={widgetEditor}
+                                                            onExecuteNode={handleExecute}
+                                                            canExecute={isConnected && !isExecuting}
+                                                            submittingNodeId={submittingNodeId}
                                                             globalExpandAction={globalExpandAction}
                                                             executingNodeId={executingNodeId}
                                                             onModeChange={(nodeId, mode) => {
@@ -1064,7 +1101,7 @@ export const WorkflowStackEditor: React.FC<WorkflowStackEditorProps> = ({ graph,
                 <WorkflowStackFooter
                     workflow={{ id, name: workflowName } as any}
                     nodes={graph._nodes || []}
-                    onExecute={handleExecute}
+                    onExecute={() => handleExecute()}
                     onInterrupt={handleInterrupt}
                     onClearQueue={handleClearQueue}
                     onRandomizeSeeds={handleRandomizeSeeds}

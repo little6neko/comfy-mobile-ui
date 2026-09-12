@@ -409,6 +409,10 @@
         "clearSearch": "検索をクリア"
     },
     "node": {
+        "executeToNode": "このノードまで実行（依存ノードを含む）",
+        "executionSubmitting": "実行を送信中…",
+        "executionQueued": "ノードの実行をキューに追加しました",
+        "executeTargetUnavailable": "実行グラフに対象の出力ノードが見つかりません。モードと接続を確認してください。",
         "copySuccess": "ノードをクリップボードにコピーしました",
         "copySuccessDesc": "「ノードを追加」メニューから貼り付けることができます",
         "copyError": "ノードのコピーに失敗しました",
@@ -682,6 +686,9 @@
         "loadingPreview": "プレビューを読み込み中...",
         "downloadingFile": "{{filename}} をダウンロード中",
         "previewFailed": "プレビュー失敗",
+        "absolutePathRequiresVhs": "絶対パスは VHS パスウィジェットからのみプレビューできます。",
+        "invalidPreviewPath": "プレビューパスが無効です。",
+        "vhsPathPreviewFailed": "VHS でこのパスをプレビューできません。ファイルと VideoHelperSuite のアクセス権を確認してください。",
         "videoNotSupported": "お使いのブラウザは動画要素をサポートしていません。",
         "fileSizes": {
             "bytes": "バイト",

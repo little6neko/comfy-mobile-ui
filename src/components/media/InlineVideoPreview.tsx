@@ -3,6 +3,7 @@ import { Video, AlertCircle, Play } from 'lucide-react';
 import { ComfyFileService } from '@/infrastructure/api/ComfyFileService';
 import { useConnectionStore } from '@/ui/store/connectionStore';
 import { useTranslation } from 'react-i18next';
+import { resolveFilePreviewReference } from '@/shared/utils/FilePreviewResolver';
 
 interface VideoPreviewData {
   filename?: string;
@@ -14,6 +15,7 @@ interface InlineVideoPreviewProps {
   videoPreview: VideoPreviewData | string;
   onClick: () => void;
   isFromExecution?: boolean; // true if from workflow execution output
+  allowVhsPath?: boolean;
   themeOverride?: {
     container?: string;
     text?: string;
@@ -25,23 +27,27 @@ export const InlineVideoPreview: React.FC<InlineVideoPreviewProps> = ({
   videoPreview,
   onClick,
   isFromExecution = false,
+  allowVhsPath = false,
   themeOverride
 }) => {
   const { t } = useTranslation();
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isVhsPathPreview, setIsVhsPathPreview] = useState(false);
   const { url: serverUrl } = useConnectionStore();
 
   useEffect(() => {
-    let currentUrl: string | null = null;
+    let objectUrl: string | null = null;
+    let cancelled = false;
 
     const loadVideo = async () => {
       if (!videoPreview) return;
 
       setLoading(true);
       setError(null);
+      setVideoUrl(null);
+      setIsVhsPathPreview(false);
 
       try {
         const serverUrlToUse = serverUrl || 'http://localhost:8188';
@@ -54,86 +60,94 @@ export const InlineVideoPreview: React.FC<InlineVideoPreviewProps> = ({
           throw new Error('Invalid filename');
         }
 
-        // Parse filename and subfolder
-        let actualFilename: string;
-        let subfolder: string = '';
-
-        if (rawFilename.includes('/')) {
-          const lastSlashIndex = rawFilename.lastIndexOf('/');
-          subfolder = rawFilename.substring(0, lastSlashIndex);
-          actualFilename = rawFilename.substring(lastSlashIndex + 1);
-        } else {
-          actualFilename = rawFilename;
-        }
-
-        console.log('📂 [InlineVideoPreview] Parsed:', {
-          actualFilename,
-          subfolder,
-          originalPath: rawFilename,
-          isFromExecution
+        const previewReference = resolveFilePreviewReference(rawFilename, {
+          allowVhsPath,
+          explicitType:
+            isFromExecution && typeof videoPreview === 'object'
+              ? videoPreview.type
+              : undefined,
+          explicitSubfolder:
+            isFromExecution && typeof videoPreview === 'object'
+              ? videoPreview.subfolder
+              : undefined,
         });
 
-        // Determine the correct type based on context
-        let locations: Array<{ type: string; subfolder: string }>;
+        if (!previewReference.ok) {
+          const message = previewReference.error === 'absolute_path_requires_vhs'
+            ? t('media.absolutePathRequiresVhs')
+            : t('media.invalidPreviewPath');
+          throw new Error(message);
+        }
 
-        if (isFromExecution && typeof videoPreview === 'object' && videoPreview.type) {
-          // From execution output - use the type specified in params
-          locations = [
-            { type: videoPreview.type, subfolder: videoPreview.subfolder || subfolder }
-          ];
-        } else {
-          // From widget parameter - always use 'input'
-          locations = [
-            { type: 'input', subfolder }
-          ];
+        const vhsPathTarget = previewReference.targets.find(
+          (target) => target.kind === 'vhs-path'
+        );
+
+        if (vhsPathTarget?.kind === 'vhs-path') {
+          if (!cancelled) {
+            setIsVhsPathPreview(true);
+            setVideoUrl(
+              fileService.createVhsPathPreviewUrl(
+                vhsPathTarget.filename,
+                vhsPathTarget.format
+              )
+            );
+          }
+          return;
         }
 
         let blob: Blob | null = null;
-        let successLocation: string | null = null;
 
-        for (const location of locations) {
-          const requestUrl = `${serverUrlToUse}/view?filename=${encodeURIComponent(actualFilename)}&type=${location.type}${location.subfolder ? `&subfolder=${encodeURIComponent(location.subfolder)}` : ''}`;
-
+        for (const target of previewReference.targets) {
+          if (target.kind !== 'comfy') continue;
           try {
             blob = await fileService.downloadFile({
-              filename: actualFilename,
-              type: location.type,
-              subfolder: location.subfolder
+              filename: target.filename,
+              type: target.type,
+              subfolder: target.subfolder
             });
 
             if (blob && blob.size > 0) {
-              successLocation = `${location.type}/${location.subfolder || '(root)'}`;
               break;
             }
-          } catch (error) {
+          } catch {
             continue;
           }
         }
 
         if (blob && blob.size > 0) {
           const url = URL.createObjectURL(blob);
-          currentUrl = url;
-          setVideoUrl(url);
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          objectUrl = url;
+          setVideoUrl(objectUrl);
         } else {
           console.error('❌ [InlineVideoPreview] Video not found in any location');
           throw new Error('Video not found');
         }
       } catch (err) {
         console.error('💥 [InlineVideoPreview] Failed to load inline video preview:', err);
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Unknown error');
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
     loadVideo();
 
     return () => {
-      if (currentUrl) {
-        URL.revokeObjectURL(currentUrl);
+      cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [videoPreview, serverUrl, isFromExecution]);
+  }, [allowVhsPath, videoPreview, serverUrl, isFromExecution, t]);
 
   if (loading) {
     return (
@@ -158,6 +172,9 @@ export const InlineVideoPreview: React.FC<InlineVideoPreviewProps> = ({
         <div className="text-center">
           <AlertCircle className="w-8 h-8 text-red-600 dark:text-red-400 mx-auto mb-2" />
           <p className="text-sm text-red-700 dark:text-red-300">{t('media.failedToLoadVideo')}</p>
+          {error && (
+            <p className="text-xs text-red-600 dark:text-red-400 px-3 line-clamp-2">{error}</p>
+          )}
           <p className="text-xs text-red-600 dark:text-red-400">{t('media.clickToRetry')}</p>
         </div>
       </div>
@@ -178,7 +195,9 @@ export const InlineVideoPreview: React.FC<InlineVideoPreviewProps> = ({
           playsInline
           controls={false}
           poster=""
-          onError={() => setError(t('media.failedToDisplayVideo'))}
+          onError={() => setError(
+            t(isVhsPathPreview ? 'media.vhsPathPreviewFailed' : 'media.failedToDisplayVideo')
+          )}
           onLoadedMetadata={(e) => {
             const video = e.target as HTMLVideoElement;
             // Set to first frame after metadata loads

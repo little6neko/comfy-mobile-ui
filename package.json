@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test:frames-editor": "tsx --tsconfig tsx.config.json tests/integration/framesEditorModelTest.ts && tsx --tsconfig tsx.config.json tests/integration/framesEditorPreviewTest.ts",
+    "test:file-preview": "tsx --tsconfig tsx.config.json tests/integration/filePreviewResolverTest.ts",
     "preview": "vite preview",
     "generate-icons": "node generate-icons.js",
     "deploy": "node scripts/deploy.js",

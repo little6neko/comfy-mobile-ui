@@ -131,6 +131,8 @@ export type ComfyUIServiceEvent =
   | QueueStatusEvent;
 
 export interface ExecutionOptions {
+  /** Output node execution IDs; their upstream dependencies are included by ComfyUI. */
+  partialExecutionTargets?: string[];
   clearCache?: boolean;
   randomizeSeed?: boolean;
   useWebSocket?: boolean;

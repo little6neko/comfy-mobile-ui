@@ -176,6 +176,8 @@ const WorkflowEditor: React.FC = () => {
   const [isGroupModeModalOpen, setIsGroupModeModalOpen] = useState<boolean>(false);
   const [isWorkflowSnapshotsOpen, setIsWorkflowSnapshotsOpen] = useState<boolean>(false);
   const [isExecuting, setIsExecuting] = useState(false);
+  const executionSubmittingRef = useRef(false);
+  const [submittingNodeId, setSubmittingNodeId] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSucceeded, setSaveSucceeded] = useState(false);
   const saveInFlightRef = useRef(false);
@@ -1641,14 +1643,39 @@ const WorkflowEditor: React.FC = () => {
 
   // #region prompt actions
   // Execute workflow using our completed Graph to API conversion
-  const handleExecute = async () => {
+  const handleExecute = async (targetNodeId?: number, widgetOverrides?: Record<string, unknown>) => {
+    if (executionSubmittingRef.current) return;
     if (!comfyGraphRef.current || !isConnected || !workflow) {
       toast.error(t('workflow.submitFailed'));
       return;
     }
 
     try {
+      executionSubmittingRef.current = true;
       setIsExecuting(true);
+      setSubmittingNodeId(targetNodeId ?? null);
+
+      // Capture active edits synchronously: React state updates from saving or
+      // seed changes are not visible in this submission's render closure.
+      const executionModifications = new Map(widgetEditor.modifiedWidgetValues);
+      if (widgetEditor.editingParam) {
+        const { nodeId, paramName } = widgetEditor.editingParam;
+        executionModifications.set(nodeId, {
+          ...executionModifications.get(nodeId),
+          [paramName]: widgetEditor.editingValue,
+        });
+        widgetEditor.saveEditingParam();
+      }
+
+      if (targetNodeId !== undefined && widgetOverrides) {
+        executionModifications.set(targetNodeId, {
+          ...executionModifications.get(targetNodeId),
+          ...widgetOverrides,
+        });
+        Object.entries(widgetOverrides).forEach(([name, value]) => {
+          widgetEditor.setWidgetValue(targetNodeId, name, value);
+        });
+      }
 
 
       // Canvas v2: seed handling (control_after_generate) runs inside the
@@ -1659,10 +1686,14 @@ const WorkflowEditor: React.FC = () => {
       if (!useOfficialPrompt) try {
         const seedChanges = await autoChangeSeed(workflow, nodeMetadata, {
           getWidgetValue: (nodeId: number, paramName: string, defaultValue: any) => {
-            const value = widgetEditor.getWidgetValue(nodeId, paramName, defaultValue);
+            const value = executionModifications.get(nodeId)?.[paramName] ?? defaultValue;
             return value;
           },
           setWidgetValue: (nodeId: number, paramName: string, value: any) => {
+            executionModifications.set(nodeId, {
+              ...executionModifications.get(nodeId),
+              [paramName]: value,
+            });
             widgetEditor.setWidgetValue(nodeId, paramName, value);
           }
         });
@@ -1695,7 +1726,7 @@ const WorkflowEditor: React.FC = () => {
         const originalGraph = comfyGraphRef.current;
         const executionGraph = createExecutionGraph(
           originalGraph,
-          widgetEditor.modifiedWidgetValues,
+          executionModifications,
         );
         const converted = convertGraphToAPI(executionGraph);
         execution = {
@@ -1704,18 +1735,31 @@ const WorkflowEditor: React.FC = () => {
         };
       }
 
+      if (targetNodeId !== undefined) {
+        const target = execution.prompt[String(targetNodeId)] as { class_type?: string } | undefined;
+        if (!target?.class_type || !objectInfo?.[target.class_type]?.output_node) {
+          throw new Error(t('node.executeTargetUnavailable'));
+        }
+      }
+
       // Step 5: Submit to server with workflow tracking information
       const promptId = await ComfyUIService.executeWorkflow(execution, {
+        partialExecutionTargets: targetNodeId === undefined ? undefined : [String(targetNodeId)],
         workflowId: id, // Use the workflow ID from URL params
         workflowName: workflow?.name || t('workflow.newWorkflowName')
       });
 
       currentPromptIdRef.current = promptId;
+      if (targetNodeId !== undefined) toast.success(t('node.executionQueued'));
     } catch (error) {
       console.error('Workflow execution failed:', error);
-      toast.error(t('workflow.submitFailed'));
+      toast.error(t('workflow.submitFailed'), {
+        description: error instanceof Error ? error.message : undefined,
+      });
     } finally {
+      executionSubmittingRef.current = false;
       setIsExecuting(false);
+      setSubmittingNodeId(null);
     }
   };
 
@@ -3852,7 +3896,7 @@ const WorkflowEditor: React.FC = () => {
       {!canvasInteraction.repositionMode.isActive && !connectionMode.connectionMode.isActive && (
         <QuickActionPanel
           workflow={workflow}
-          onExecute={handleExecute}
+          onExecute={() => handleExecute()}
           onInterrupt={handleInterrupt}
           onClearQueue={handleClearQueue}
           refreshQueueTrigger={queueRefreshTrigger}
@@ -4145,6 +4189,10 @@ const WorkflowEditor: React.FC = () => {
           nodeBounds={nodeBounds as any}
           getWidgetValue={widgetEditor.getWidgetValue}
           getNodeMode={widgetEditor.getNodeMode}
+          isOutputNode={objectInfo?.[selectedNode.type]?.output_node === true}
+          canSingleExecute={isConnected && !isExecuting}
+          isSingleExecuting={submittingNodeId === Number(selectedNode.id)}
+          onSingleExecute={handleExecute}
           onClose={() => {
             // Clear image cache for the node when inspector closes
             // as widget values may have changed
@@ -4253,8 +4301,9 @@ const WorkflowEditor: React.FC = () => {
         loading={fileOperations.previewModal.loading}
         error={fileOperations.previewModal.error}
         url={fileOperations.previewModal.url}
+        isVhsPathPreview={fileOperations.previewModal.isVhsPathPreview}
         onClose={fileOperations.closePreview}
-        onRetry={fileOperations.handleFilePreview}
+        onRetry={fileOperations.retryFilePreview}
       />
 
       {/* JSON Viewer Modal */}
@@ -4365,4 +4414,3 @@ const WorkflowEditor: React.FC = () => {
 };
 
 export default WorkflowEditor;
-

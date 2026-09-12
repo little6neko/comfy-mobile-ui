@@ -29,6 +29,7 @@ interface FilePreviewModalProps {
   dimensions?: { width: number; height: number };
   duration?: number;
   isCompact?: boolean;
+  isVhsPathPreview?: boolean;
   // Navigation props (v2)
   files?: IComfyFileInfo[];
   initialIndex?: number;
@@ -55,6 +56,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   dimensions: initialDimensions,
   duration: initialDuration,
   isCompact = false,
+  isVhsPathPreview = false,
   files = [],
   initialIndex = -1,
   comfyFileService,
@@ -122,7 +124,13 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
 
     const inspectWorkflowMetadata = async () => {
       setEmbeddedWorkflow(null);
-      if (!isOpen || !canOpenWorkflow || !url || !filename.toLowerCase().endsWith('.png')) {
+      if (
+        !isOpen ||
+        !canOpenWorkflow ||
+        isVhsPathPreview ||
+        !url ||
+        !filename.toLowerCase().endsWith('.png')
+      ) {
         setIsCheckingWorkflow(false);
         return;
       }
@@ -149,7 +157,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, canOpenWorkflow, url, filename]);
+  }, [isOpen, canOpenWorkflow, isVhsPathPreview, url, filename]);
 
   // Handle navigation
   const navigateToFile = useCallback((index: number) => {
@@ -256,12 +264,22 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
 
   const handleImageError = () => {
     console.error('❌ Failed to load image in browser:', filename);
-    onMediaError?.(t('media.failedToDisplayImage'));
+    const message = t('media.failedToDisplayImage');
+    setLoading(false);
+    setError(message);
+    onMediaError?.(message);
   };
 
   const handleVideoError = () => {
     console.error('❌ Failed to load video in browser:', filename);
-    onMediaError?.(t('media.failedToDisplayVideo'));
+    const message = t(
+      isVhsPathPreview
+        ? 'media.vhsPathPreviewFailed'
+        : 'media.failedToDisplayVideo'
+    );
+    setLoading(false);
+    setError(message);
+    onMediaError?.(message);
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -406,17 +424,19 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                       <ExternalLink className="w-5 h-5" />
                     </Button>
 
-                    <Button
-                      onClick={handleDownload}
-                      disabled={isDownloading}
-                      variant="ghost"
-                      size="sm"
- className="h-10 px-3 md:px-4 rounded-xl hover:bg-white/[0.06] dark:hover:bg-[#14171e] text-[#71798a] font-semibold"
-                      title={t('media.downloadFile')}
-                    >
-                      <Download className="w-5 h-5 md:mr-2" />
-                      <span className="hidden md:inline">{isDownloading ? t('media.downloading') : t('media.download')}</span>
-                    </Button>
+                    {!isVhsPathPreview && (
+                      <Button
+                        onClick={handleDownload}
+                        disabled={isDownloading}
+                        variant="ghost"
+                        size="sm"
+                        className="h-10 px-3 md:px-4 rounded-xl hover:bg-white/[0.06] dark:hover:bg-[#14171e] text-[#71798a] font-semibold"
+                        title={t('media.downloadFile')}
+                      >
+                        <Download className="w-5 h-5 md:mr-2" />
+                        <span className="hidden md:inline">{isDownloading ? t('media.downloading') : t('media.download')}</span>
+                      </Button>
+                    )}
                   </>
                 )}
 
@@ -553,6 +573,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                           src={url}
                           alt={filename}
                           className="max-w-full max-h-full object-contain"
+                          onLoad={() => setLoading(false)}
                           onError={handleImageError}
                         />
                       </TransformComponent>
@@ -563,6 +584,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                       controls
                       preload="auto"
                       className="max-w-full max-h-full object-contain"
+                      onLoadedData={() => setLoading(false)}
                       onError={handleVideoError}
                       {...(isCompact ? { playsInline: true, "webkit-playsinline": "true" } : {})}
                     >

@@ -12,6 +12,10 @@ import { IProcessedParameter } from '@/shared/types/comfy/IComfyObjectInfo';
 import { ComfyGraphNode } from '@/core/domain/ComfyGraphNode';
 import { IComfyWidget } from '@/shared/types/app/IComfyGraphNode';
 import { isImageFile, isVideoFile } from '@/shared/utils/ComfyFileUtils';
+import {
+  hasVhsPathExtensions,
+  type FilePreviewRequestOptions,
+} from '@/shared/utils/FilePreviewResolver';
 import { getGalleryPermissions } from '@/shared/utils/GalleryPermissionUtils';
 import { InlineImagePreview } from '@/components/media/InlineImagePreview';
 import { InlineVideoPreview } from '@/components/media/InlineVideoPreview';
@@ -47,7 +51,7 @@ interface WidgetValueEditorProps {
   onCancelEditing: () => void;
   onSaveEditing: () => void;
   onEditingValueChange: (value: any) => void;
-  onFilePreview: (filename: string) => void;
+  onFilePreview: (filename: string, options?: FilePreviewRequestOptions) => void;
   onFileUpload: (nodeId: number, paramName: string) => void;
   onFileUploadDirect?: (nodeId: number, paramName: string, file: File) => void;
   // Optional ComfyGraphNode context
@@ -117,6 +121,8 @@ export const WidgetValueEditor: React.FC<WidgetValueEditorProps> = ({
 }) => {
   const { t } = useTranslation();
   const [showAlbumModal, setShowAlbumModal] = useState(false);
+  const allowVhsPath = hasVhsPathExtensions(widget?.options, param.config);
+  const filePreviewOptions = allowVhsPath ? { allowVhsPath: true } : undefined;
 
   // Debug logging for modal state changes
   React.useEffect(() => {
@@ -508,7 +514,8 @@ export const WidgetValueEditor: React.FC<WidgetValueEditorProps> = ({
           <div className="mt-3">
             <InlineImagePreview
               imagePreview={currentValue}
-              onClick={() => onFilePreview(currentValue)}
+              onClick={() => onFilePreview(currentValue, filePreviewOptions)}
+              allowVhsPath={allowVhsPath}
               themeOverride={themeOverride ? {
                 ...themeOverride,
                 container: 'bg-black/20 border border-white/5'
@@ -522,7 +529,8 @@ export const WidgetValueEditor: React.FC<WidgetValueEditorProps> = ({
           <div className="mt-3">
             <InlineVideoPreview
               videoPreview={currentValue}
-              onClick={() => onFilePreview(currentValue)}
+              onClick={() => onFilePreview(currentValue, filePreviewOptions)}
+              allowVhsPath={allowVhsPath}
               themeOverride={themeOverride ? {
                 ...themeOverride,
                 container: 'bg-black/20 border border-white/5'

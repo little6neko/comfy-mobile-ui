@@ -816,6 +816,21 @@ export class ComfyFileService {
   }
 
   /**
+   * Create the streaming preview URL used by VideoHelperSuite path widgets.
+   * VHS transcodes both image and video paths to a browser-friendly WebM.
+   */
+  createVhsPathPreviewUrl(filename: string, format: string): string {
+    const params = new URLSearchParams({
+      filename,
+      type: 'path',
+      format,
+      timestamp: Date.now().toString(),
+    });
+
+    return withComfyAuth(`${this.serverUrl}/vhs/viewvideo?${params.toString()}`);
+  }
+
+  /**
    * Check if a file exists on the server
    */
   async fileExists(filename: string, subfolder: string = '', type: ComfyFileType = 'output'): Promise<boolean> {

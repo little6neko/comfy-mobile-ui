@@ -9,7 +9,7 @@ import type {
   PreparedWorkflowExecution,
   ServerInfo,
 } from '@/shared/types/comfy/IComfyAPI';
-import { buildPromptExtraData } from './ComfyPromptPayload';
+import { buildPromptExtraData, buildPromptPayload } from './ComfyPromptPayload';
 import type {
   LogsRawResponse,
   LogSubscribeRequest
@@ -295,7 +295,7 @@ const executeWorkflow = async (
 
   // Generate unique prompt ID and submit to server
   const promptId = generatePromptId();
-  const serverPromptId = await submitPrompt(execution, promptId, workflowId, workflowName);
+  const serverPromptId = await submitPrompt(execution, promptId, workflowId, workflowName, options.partialExecutionTargets);
 
   console.log('[ComfyApiClient] Workflow submitted successfully:', {
     promptId: serverPromptId.substring(0, 8) + '...',
@@ -313,18 +313,17 @@ const submitPrompt = async (
   execution: PreparedWorkflowExecution,
   promptId: string,
   workflowId?: string,
-  workflowName?: string
+  workflowName?: string,
+  partialExecutionTargets?: string[]
 ): Promise<string> => {
   try {
-    const payload = {
-      prompt: execution.prompt,
-      client_id: globalWebSocketService.getState().clientId, // Use GlobalWebSocketService's clientId
-      prompt_id: promptId,
-      extra_data: buildPromptExtraData(
-        useLatentPreviewStore.getState().previewMethod,
-        execution.workflow,
-      ),
-    };
+    const payload = buildPromptPayload(
+      execution,
+      globalWebSocketService.getState().clientId,
+      promptId,
+      useLatentPreviewStore.getState().previewMethod,
+      partialExecutionTargets,
+    );
 
     const response = await axios.post<IComfyPromptResponse>(
       `${serverUrl}/prompt`,

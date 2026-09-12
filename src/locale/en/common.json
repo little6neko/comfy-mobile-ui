@@ -413,6 +413,10 @@
         "clearSearch": "Clear Search"
     },
     "node": {
+        "executeToNode": "Execute up to this node (including dependencies)",
+        "executionSubmitting": "Submitting execution…",
+        "executionQueued": "Node execution queued",
+        "executeTargetUnavailable": "The target output node is unavailable in the execution graph. Check its mode and connections.",
         "copySuccess": "Node copied to clipboard",
         "copySuccessDesc": "You can paste it from the Add Node menu",
         "copyError": "Failed to copy node",
@@ -686,6 +690,9 @@
         "loadingPreview": "Loading preview...",
         "downloadingFile": "Downloading {{filename}}",
         "previewFailed": "Preview Failed",
+        "absolutePathRequiresVhs": "Absolute paths can only be previewed from a VHS path widget.",
+        "invalidPreviewPath": "The preview path is invalid.",
+        "vhsPathPreviewFailed": "VHS could not preview this path. Check that the file exists and VideoHelperSuite is allowed to access it.",
         "videoNotSupported": "Your browser does not support the video element.",
         "fileSizes": {
             "bytes": "Bytes",

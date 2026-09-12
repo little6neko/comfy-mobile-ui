@@ -3,6 +3,11 @@ import { ComfyFileService } from '@/infrastructure/api/ComfyFileService';
 import { isImageFile, isVideoFile } from '@/shared/utils/ComfyFileUtils';
 import { extractVideoThumbnail } from '@/shared/utils/VideoUtils';
 import { useConnectionStore } from '@/ui/store/connectionStore';
+import { useTranslation } from 'react-i18next';
+import {
+  resolveFilePreviewReference,
+  type FilePreviewRequestOptions,
+} from '@/shared/utils/FilePreviewResolver';
 
 interface UploadState {
   isUploading: boolean;
@@ -18,6 +23,8 @@ interface PreviewModal {
   url?: string;
   loading?: boolean;
   error?: string;
+  requestOptions?: FilePreviewRequestOptions;
+  isVhsPathPreview?: boolean;
 }
 
 interface ErrorDialog {
@@ -32,6 +39,7 @@ interface UseFileOperationsProps {
 }
 
 export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) => {
+  const { t } = useTranslation();
   const { url: serverUrl } = useConnectionStore();
   
   // File preview states
@@ -60,7 +68,10 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
   };
 
   // File preview handler
-  const handleFilePreview = async (filename: string) => {
+  const handleFilePreview = async (
+    filename: string,
+    requestOptions: FilePreviewRequestOptions = {}
+  ) => {
     
     if (!filename || typeof filename !== 'string') {
       console.error('❌ Invalid filename:', filename);
@@ -86,13 +97,37 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
       });
       return;
     }
+
+    const previewReference = resolveFilePreviewReference(filename, requestOptions);
+    if (!previewReference.ok) {
+      const previewError = previewReference.error === 'absolute_path_requires_vhs'
+        ? t('media.absolutePathRequiresVhs')
+        : t('media.invalidPreviewPath');
+
+      setPreviewModal({
+        isOpen: true,
+        filename,
+        isImage,
+        loading: false,
+        error: previewError,
+        requestOptions,
+      });
+      setErrorDialog({
+        isOpen: true,
+        title: 'Invalid Preview Path',
+        message: previewError,
+        details: `Path: ${filename}`,
+      });
+      return;
+    }
     
     // Show loading modal immediately
     setPreviewModal({
       isOpen: true,
       filename,
       isImage,
-      loading: true
+      loading: true,
+      requestOptions,
     });
     
     try {
@@ -111,29 +146,32 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
         });
         return;
       }
-      
-      // Parse filename and subfolder
-      // Handle cases like "pasted/image.png" or "subfolder/filename.ext"
-      let actualFilename: string;
-      let subfolder: string = '';
-      
-      if (filename.includes('/')) {
-        const lastSlashIndex = filename.lastIndexOf('/');
-        subfolder = filename.substring(0, lastSlashIndex);
-        actualFilename = filename.substring(lastSlashIndex + 1);
-      } else {
-        actualFilename = filename;
+
+      const vhsPathTarget = previewReference.targets.find(
+        (target) => target.kind === 'vhs-path'
+      );
+      if (vhsPathTarget?.kind === 'vhs-path') {
+        setPreviewModal({
+          isOpen: true,
+          filename,
+          isImage: false,
+          url: fileService.createVhsPathPreviewUrl(
+            vhsPathTarget.filename,
+            vhsPathTarget.format
+          ),
+          loading: true,
+          requestOptions,
+          isVhsPathPreview: true,
+        });
+        return;
       }
-      
-      // For widget values, search in input first, then fallback to output and temp
-      const locations = [
-        { type: 'input', subfolder, description: 'Input files (widget values)' },
-        { type: 'output', subfolder, description: 'Output files (fallback)' },
-        { type: 'temp', subfolder, description: 'Temporary files (fallback)' }
-      ];
+
+      const locations = previewReference.targets.filter(
+        (target) => target.kind === 'comfy'
+      );
+      const actualFilename = locations[0]?.filename || filename;
       
       let blob: Blob | null = null;
-      let successLocation = '';
       
       for (const location of locations) {
         
@@ -145,11 +183,10 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
           });
           
           if (blob && blob.size > 0) {
-            successLocation = `${location.type}${location.subfolder ? '/' + location.subfolder : ''}`;
             break;
-          } else {
           }
-        } catch (locationError) {
+        } catch {
+          continue;
         }
       }
       
@@ -161,7 +198,8 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
           filename,
           isImage,
           url,
-          loading: false
+          loading: false,
+          requestOptions,
         });
       } else {
         console.error('❌ File not found in any location');
@@ -170,7 +208,7 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
           isOpen: true,
           title: 'File Not Found',
           message: `Could not find the file "${actualFilename}" on the ComfyUI server.`,
-          details: `Original path: ${filename}\nParsed: ${actualFilename}${subfolder ? ` (subfolder: ${subfolder})` : ''}\n\nSearched in locations:\n${locations.map(loc => `- ${loc.type}${loc.subfolder ? '/' + loc.subfolder : ''} (${loc.description})`).join('\n')}\n\nNote: Widget values typically contain input files. Make sure the file exists in the ComfyUI input directory.`
+          details: `Original path: ${filename}\nParsed: ${actualFilename}${locations[0]?.subfolder ? ` (subfolder: ${locations[0].subfolder})` : ''}\n\nSearched in locations:\n${locations.map(loc => `- ${loc.type}${loc.subfolder ? '/' + loc.subfolder : ''}`).join('\n')}`
         });
       }
     } catch (error) {
@@ -375,7 +413,7 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
 
   // Close preview modal
   const closePreview = () => {
-    if (previewModal.url) {
+    if (previewModal.url?.startsWith('blob:')) {
       URL.revokeObjectURL(previewModal.url);
     }
     setPreviewModal({ isOpen: false, filename: '', isImage: false });
@@ -385,6 +423,9 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
   const closeErrorDialog = () => {
     setErrorDialog({ isOpen: false, title: '', message: '' });
   };
+
+  const retryFilePreview = (filename: string) =>
+    handleFilePreview(filename, previewModal.requestOptions);
 
   // Handle direct file upload (from clipboard or album)
   const handleFileUploadDirect = async (nodeId: number, paramName: string, file: File) => {
@@ -552,6 +593,7 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
     
     // Functions
     handleFilePreview,
+    retryFilePreview,
     handleFileUpload,
     handleFileSelect,
     handleFileUploadDirect,

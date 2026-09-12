@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { ComfyGraph } from '../../src/core/domain/ComfyGraph';
 import { ComfyGraphNode } from '../../src/core/domain/ComfyGraphNode';
 import { createExecutionGraph } from '../../src/core/services/WorkflowExecutionService';
-import { buildPromptExtraData } from '../../src/infrastructure/api/ComfyPromptPayload';
+import { buildPromptExtraData, buildPromptPayload } from '../../src/infrastructure/api/ComfyPromptPayload';
 
 const originalGraph = new ComfyGraph();
 const sourceNode = new ComfyGraphNode(1, 'TestNode');
@@ -35,4 +35,22 @@ assert.deepEqual(buildPromptExtraData('auto', workflow), {
 assert.deepEqual(buildPromptExtraData('none'), { preview_method: 'none' });
 assert.deepEqual(buildPromptExtraData('taesd', 'invalid workflow'), { preview_method: 'taesd' });
 
-console.log('Prompt workflow metadata tests passed');
+const prompt = {
+  '1': { class_type: 'LoadImage', inputs: { image: 'input.png' } },
+  '2': { class_type: 'easy framesEditor', inputs: { images: ['1', 0] } },
+  '3': { class_type: 'SaveImage', inputs: { images: ['1', 0] } },
+};
+const execution = { prompt, workflow };
+const partial = buildPromptPayload(execution, 'client', 'prompt', 'auto', ['2']);
+assert.deepEqual(partial.partial_execution_targets, ['2']);
+assert.deepEqual(partial.prompt, prompt, 'retain upstream and unrelated branches for server-side targeting');
+assert.deepEqual(partial.extra_data.extra_pnginfo?.workflow, workflow);
+assert.equal(partial.client_id, 'client');
+assert.equal(partial.prompt_id, 'prompt');
+assert.equal('partial_execution_targets' in buildPromptPayload(execution, 'client', 'prompt', 'none'), false);
+assert.deepEqual(buildPromptPayload(execution, 'client', 'prompt', 'auto', ['3']).partial_execution_targets, ['3'],
+  'partial execution must work for other output node types too');
+assert.throws(() => buildPromptPayload(execution, 'client', 'prompt', 'auto', []));
+assert.throws(() => buildPromptPayload(execution, 'client', 'prompt', 'auto', ['missing']));
+
+console.log('Prompt workflow metadata and partial execution tests passed');

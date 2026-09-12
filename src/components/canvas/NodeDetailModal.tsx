@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 
 import {
     RefreshCw, X, ExternalLink, Play, Image as ImageIcon, SlidersHorizontal, Edit3, Check,
-    Copy, Minimize2, Maximize2, Palette, VolumeX, Shuffle, MousePointer2, Trash2
+    Copy, Minimize2, Maximize2, Palette, VolumeX, Shuffle, MousePointer2, Trash2, StepForward
 } from 'lucide-react';
 import { INodeWithMetadata, IProcessedParameter } from '@/shared/types/comfy/IComfyObjectInfo';
 import { ComfyGraphNode } from '@/core/domain/ComfyGraphNode';
@@ -27,6 +27,7 @@ import { InlineImagePreview } from '@/components/media/InlineImagePreview';
 import { PointEditor } from '@/components/controls/widgets/custom_node_widget/PointEditor';
 import { FramesEditorLauncher } from '@/features/frames-editor';
 import { detectParameterTypeForGallery } from '@/shared/utils/GalleryPermissionUtils';
+import type { FilePreviewRequestOptions } from '@/shared/utils/FilePreviewResolver';
 
 interface NodeBounds {
     x: number;
@@ -67,7 +68,7 @@ interface NodeDetailModalProps {
     onSaveEditing: () => void;
     onEditingValueChange: (value: any) => void;
     onControlAfterGenerateChange?: (nodeId: number, value: string) => void;
-    onFilePreview: (filename: string) => void;
+    onFilePreview: (filename: string, options?: FilePreviewRequestOptions) => void;
     onFileUpload: (nodeId: number, paramName: string) => void;
     onFileUploadDirect?: (nodeId: number, paramName: string, file: File) => void;
     onNavigateToNode: (nodeId: number) => void;
@@ -80,7 +81,7 @@ interface NodeDetailModalProps {
     isOutputNode?: boolean;
     canSingleExecute?: boolean;
     isSingleExecuting?: boolean;
-    onSingleExecute?: (nodeId: number) => void;
+    onSingleExecute?: (nodeId: number, widgetOverrides?: Record<string, unknown>) => void;
     // Node color change functionality
     onNodeColorChange?: (nodeId: number, bgcolor: string) => void;
     // Node copy functionality
@@ -537,6 +538,11 @@ export const NodeDetailModal: React.FC<NodeDetailModalProps> = ({
                                     currentValue={getWidgetValue(nodeId, param.name, param.value)}
                                     isModified={isWidgetModified(param.name)}
                                     onCommit={(value) => setWidgetValue(nodeId, 'info', value)}
+                                    onExecute={isOutputNode && onSingleExecute
+                                        ? (value) => onSingleExecute(nodeId, { info: value })
+                                        : undefined}
+                                    canExecute={canSingleExecute && currentMode === 0}
+                                    isSubmitting={isSingleExecuting}
                                 />
                             ) : isWidgetValues && selectedNode ? (
                                 isInputConnected(param.name) ? (
@@ -847,39 +853,6 @@ export const NodeDetailModal: React.FC<NodeDetailModalProps> = ({
         );
     };
 
-    const renderSingleExecute = () => {
-        if (!canSingleExecute || !onSingleExecute) return null;
-        return (
-            <div className="mt-10 pt-6 border-t border-white/[0.07]">
-                <div className="flex items-center justify-between mb-2">
-                    <div>
-                        <h4 className="text-[12px] font-bold text-[#e9ebef]">Single Execution</h4>
-                        <p className="text-xs text-[#71798a] mt-0.5">Process only this node.</p>
-                    </div>
-                </div>
-                <Button
-                    size="lg"
-                    disabled={isSingleExecuting}
-                    onClick={() => onSingleExecute(nodeId)}
-                    className={`
-                        w-full
-                        ${isSingleExecuting ? 'opacity-70 cursor-not-allowed' : ''}
-                        ${isOutputNode
-                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200/50 dark:shadow-none'
-                            : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200/50 dark:shadow-none'}
-                        shadow-lg transition-all h-12 rounded-xl font-semibold text-sm
-                    `}
-                >
-                    {isSingleExecuting ? (
-                        <span className="flex items-center"><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Processing...</span>
-                    ) : (
-                        <span className="flex items-center"><Play className="w-4 h-4 mr-2 fill-current" /> Execute Node</span>
-                    )}
-                </Button>
-            </div>
-        );
-    };
-
     return createPortal(
         <AnimatePresence>
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6" style={{ pointerEvents: 'none' }}>
@@ -906,7 +879,7 @@ export const NodeDetailModal: React.FC<NodeDetailModalProps> = ({
                 >
                     {/* Action Buttons Row - Positioned above the modal */}
                     <div className="absolute top-0 left-0 -translate-y-[calc(100%+12px)] flex items-center w-full min-h-[40px] pointer-events-none">
-                        <div className="flex items-center pointer-events-auto">
+                        <div className="flex items-center max-w-full overflow-x-auto pointer-events-auto">
                             <AnimatePresence mode="wait">
                                 {!showColorPicker ? (
                                     <motion.div
@@ -915,9 +888,24 @@ export const NodeDetailModal: React.FC<NodeDetailModalProps> = ({
                                         animate={{ opacity: 1 }}
                                         exit={{ opacity: 0 }}
                                         transition={{ duration: 0.15 }}
-                                        className="flex items-center gap-2"
+                                        className="flex shrink-0 items-center gap-2 p-1"
                                     >
                                         {/* Action Bar */}
+                                        {isOutputNode && onSingleExecute && (
+                                            <button
+                                                type="button"
+                                                disabled={!canSingleExecute || isSingleExecuting || currentMode !== 0}
+                                                onClick={() => onSingleExecute(nodeId)}
+                                                title={t(isSingleExecuting ? 'node.executionSubmitting' : 'node.executeToNode')}
+                                                aria-label={t(isSingleExecuting ? 'node.executionSubmitting' : 'node.executeToNode')}
+                                                aria-busy={isSingleExecuting}
+                                                className="w-[38px] h-[38px] rounded-[10px] bg-[#0f1116]/90 backdrop-blur-md shadow-xl border border-white/10 flex items-center justify-center text-[#4ade80] hover:bg-emerald-500/10 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                {isSingleExecuting
+                                                    ? <RefreshCw className="w-4 h-4 animate-spin" />
+                                                    : <StepForward className="w-4 h-4" />}
+                                            </button>
+                                        )}
                                         {/* Subgraph Edit Button (Replaces Copy for Subgraphs) */}
                                         {subgraphDefinition && onEnterSubgraph ? (
                                             <button
@@ -1225,8 +1213,6 @@ export const NodeDetailModal: React.FC<NodeDetailModalProps> = ({
                                         </div>
                                     )}
 
-                                    {/* Single Execute Footer */}
-                                    {renderSingleExecute()}
                                 </div>
                             </div>
                         </div>

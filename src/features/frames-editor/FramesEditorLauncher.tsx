@@ -11,6 +11,9 @@ interface FramesEditorLauncherProps {
   currentValue: unknown;
   isModified?: boolean;
   onCommit: (value: string) => void;
+  onExecute?: (value: string) => void;
+  canExecute?: boolean;
+  isSubmitting?: boolean;
 }
 
 export const FramesEditorLauncher = ({
@@ -19,6 +22,9 @@ export const FramesEditorLauncher = ({
   currentValue,
   isModified = false,
   onCommit,
+  onExecute,
+  canExecute,
+  isSubmitting,
 }: FramesEditorLauncherProps) => {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -81,6 +87,9 @@ export const FramesEditorLauncher = ({
           currentValue={currentValue}
           preview={preview}
           onCommit={onCommit}
+          onExecute={onExecute}
+          canExecute={canExecute}
+          isSubmitting={isSubmitting}
           onClose={() => setIsOpen(false)}
         />
       )}
