@@ -15,10 +15,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
           color: 'rgb(241, 245, 249)', // text-slate-100
           fontSize: '14px', 
           padding: '10px 16px',
-          width: 'calc(100vw - 32px)',
-          maxWidth: 'none',
+          width: '100%',
+          maxWidth: 'calc(100vw - 32px)',
+          overflowWrap: 'anywhere',
         },
         classNames: {
+          content: 'min-w-0',
           toast: 'group toast group-[.toaster]:bg-transparent group-[.toaster]:text-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg',
           description: 'group-[.toast]:text-muted-foreground',
           actionButton: 'group-[.toast]:bg-primary group-[.toast]:text-primary-foreground',
