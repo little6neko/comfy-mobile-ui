@@ -21,6 +21,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({ onBack }) => {
     error,
     apiStatus,
     extensionStatus,
+    extensionError,
     authMode,
     authToken,
     rememberAuthToken,
@@ -215,6 +216,9 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({ onBack }) => {
                 </span>
               </div>
             ))}
+            {extensionError && (
+              <p className="mb-3 text-xs text-[#f87c7c]">{t(`common.extensionCheck.${extensionError}`)}</p>
+            )}
             {error && (
               <div className="mb-3 p-2.5 bg-[#f25555]/10 border border-[#f25555]/25 rounded-lg flex items-start gap-2">
                 <XCircle className="h-3.5 w-3.5 text-[#f87c7c] flex-shrink-0 mt-0.5" strokeWidth={1.9} />

@@ -27,6 +27,7 @@ interface ConnectionStore extends ConnectionState {
   tryAutoConnect: () => Promise<void>;
   checkExtension: () => Promise<void>; // New simple method
   remoteVersion: string | null;
+  extensionError: 'timeout' | 'unreachable' | 'notFound' | 'invalidResponse' | null;
 
   // WebSocket-specific state and actions
   webSocket: GlobalWebSocketState;
@@ -48,6 +49,7 @@ export const useConnectionStore = create<ConnectionStore>()(
         error: null,
         errorCode: null,
         hasExtension: false,
+        extensionError: null,
         remoteVersion: null,
         apiStatus: 'idle',
         wsStatus: 'idle',
@@ -67,7 +69,7 @@ export const useConnectionStore = create<ConnectionStore>()(
           const { authMode } = get();
           const authToken = authMode === 'comfyui-login' ? loadComfyAuthToken(url) : '';
           configureComfyAuth({ serverUrl: url, mode: authMode, token: authToken });
-          set({ url, authToken, error: null, errorCode: null });
+          set({ url, authToken, error: null, errorCode: null, extensionError: null });
         },
 
         setAuthMode: (authMode: ComfyAuthMode) => {
@@ -231,7 +233,7 @@ export const useConnectionStore = create<ConnectionStore>()(
           }
 
 
-          // Use a shorter timeout for auto-connect to avoid blocking UI
+          // Track auto-connection without blocking the rest of the UI.
           set({
             isConnecting: true,
             error: null,
@@ -252,8 +254,8 @@ export const useConnectionStore = create<ConnectionStore>()(
             get().checkExtension();
 
             connectionService.setBaseURL(url);
-            // Use shorter timeout for auto-connection (3 seconds)
-            const result = await connectionService.testConnection(3000);
+            // Remote HTTPS connections may need several seconds to establish.
+            const result = await connectionService.testConnection(10000);
 
             if (result.success) {
               set({
@@ -293,10 +295,11 @@ export const useConnectionStore = create<ConnectionStore>()(
 
         checkExtension: async () => {
           const { url } = get();
+          set({ isCheckingExtension: true, extensionStatus: 'checking', extensionError: null });
 
           // 1. Check static version file (App Version) - Always available if served
           try {
-            const versionRes = await fetch('/version.json');
+            const versionRes = await fetch('/version.json', { signal: AbortSignal.timeout(10000) });
             if (versionRes.ok) {
               const data = await versionRes.json();
               set({ remoteVersion: data.version || '0.0.0' });
@@ -309,31 +312,35 @@ export const useConnectionStore = create<ConnectionStore>()(
 
           // 2. Check Extension API presence (Server Capability) - Requires connection
           if (!url) {
-            set({ hasExtension: false, isCheckingExtension: false });
+            set({ hasExtension: false, isCheckingExtension: false, extensionStatus: 'idle', extensionError: null });
             return;
           }
 
           try {
             const apiRes = await comfyAuthenticatedFetch(`${url}/comfymobile/api/status`, {
               method: 'GET',
-              signal: AbortSignal.timeout(3000)
+              signal: AbortSignal.timeout(10000)
             });
 
             if (apiRes.ok) {
               const data = await apiRes.json();
-              const isValid = data.status === 'ok' && data.extension === 'ComfyUI Mobile UI API';
+              const isValid = data?.status === 'ok' && data?.extension === 'ComfyUI Mobile UI API';
               set({
                 hasExtension: isValid,
+                extensionError: isValid ? null : 'invalidResponse',
                 extensionStatus: isValid ? 'success' : 'failed',
                 isCheckingExtension: false
               });
               console.log('✅ Extension API Status:', isValid ? 'Available' : 'Invalid Response');
             } else {
-              set({ hasExtension: false, extensionStatus: 'failed', isCheckingExtension: false });
+              set({ hasExtension: false, extensionStatus: 'failed', isCheckingExtension: false,
+                extensionError: apiRes.status === 404 ? 'notFound' : 'unreachable' });
             }
           } catch (error) {
             // API check failed (server down or extension not installed)
-            set({ hasExtension: false, extensionStatus: 'failed', isCheckingExtension: false });
+            set({ hasExtension: false, extensionStatus: 'failed', isCheckingExtension: false,
+              extensionError: error instanceof Error && error.name === 'TimeoutError'
+                ? 'timeout' : error instanceof SyntaxError ? 'invalidResponse' : 'unreachable' });
           }
         },
 

@@ -1,5 +1,11 @@
 {
     "common": {
+        "extensionCheck": {
+            "timeout": "移动端 API 扩展检测超时（10 秒），请检查网络后重试；这不代表扩展未安装。",
+            "unreachable": "无法访问移动端 API 扩展，请检查服务器地址、网络或登录状态后重试。",
+            "notFound": "移动端 API 扩展接口不存在（404），请检查后端地址、扩展安装及代理转发。",
+            "invalidResponse": "移动端 API 扩展返回了非预期内容，请确认填写的是 ComfyUI 后端地址，而非 mobile 页面地址。"
+        },
         "cancel": "取消",
         "prev": "上一步",
         "delete": "删除",

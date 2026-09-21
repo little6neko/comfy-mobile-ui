@@ -17,7 +17,7 @@ const WorkflowUpload: React.FC = () => {
   const navigate = useNavigate();
 
   // Use connection store to get actual connection status
-  const { url: serverUrl, isConnected, isConnecting, error: connectionError, hasExtension, isCheckingExtension, checkExtension } = useConnectionStore();
+  const { url: serverUrl, isConnected, isConnecting, error: connectionError, hasExtension, isCheckingExtension, checkExtension, extensionError } = useConnectionStore();
   const [localWorkflows, setLocalWorkflows] = useState<IComfyWorkflow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState<string | null>(null);
@@ -347,7 +347,7 @@ const WorkflowUpload: React.FC = () => {
                           <div className="p-3 bg-[#f25555]/10 border border-[#f25555]/20 rounded-lg flex items-start gap-2">
                             <AlertCircle className="h-4 w-4 text-[#f87c7c] flex-shrink-0 mt-0.5" />
                             <span className="text-[#f87c7c] text-[12px]">
-                              {t('workflow.import.extensionNotFound')}
+                              {t(`common.extensionCheck.${extensionError || 'unreachable'}`)}
                             </span>
                           </div>
                         )}

@@ -1,5 +1,11 @@
 {
     "common": {
+        "extensionCheck": {
+            "timeout": "Extension check timed out after 10 seconds. Check your connection and retry; this does not mean the extension is missing.",
+            "unreachable": "Cannot reach the mobile API extension. Check the server URL, network or login and retry.",
+            "notFound": "Mobile API endpoint not found (404). Check the backend URL, extension installation and proxy routing.",
+            "invalidResponse": "Unexpected mobile API response. Use the ComfyUI backend URL, not the mobile page URL."
+        },
         "cancel": "Cancel",
         "prev": "Previous",
         "delete": "Delete",

@@ -23,7 +23,7 @@ export class ConnectionService {
   private config: ConnectionConfig = {
     maxRetries: 4,
     retryDelays: [1000, 2000, 4000, 8000],
-    timeout: 5000
+    timeout: 10000
   };
   
   constructor(baseURL?: string) {
