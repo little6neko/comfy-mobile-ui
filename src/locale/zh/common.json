@@ -606,6 +606,8 @@
         }
     },
     "gallery": {
+        "showFileList": "切换为文件名列表",
+        "showThumbnails": "切换为缩略图预览",
         "title": "图像和视频",
         "selectFile": "选择文件",
         "filesTotal": "共 {{count}} 个文件",

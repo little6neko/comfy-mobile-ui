@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { ArrowLeft, Image as ImageIcon, Video, Loader2, RefreshCw, Server, AlertCircle, CheckCircle, Trash2, FolderOpen, Check, X, MousePointer, ChevronLeft, CheckSquare, Copy, LayoutGrid, FolderTree, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, Video, Loader2, RefreshCw, Server, AlertCircle, CheckCircle, Trash2, FolderOpen, Check, X, MousePointer, ChevronLeft, CheckSquare, Copy, LayoutGrid, FolderTree, ChevronRight, List } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -298,6 +298,7 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
 
   // View mode states
   const [viewMode, setViewMode] = useState<'flat' | 'folders'>('flat');
+  const [fileLayout, setFileLayout] = useState<'grid' | 'list'>('grid');
   const [selectedSubfolder, setSelectedSubfolder] = useState<string | null>(null);
 
   // Selection mode states
@@ -894,6 +895,16 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setFileLayout(current => current === 'grid' ? 'list' : 'grid')}
+              className="w-9 h-9 flex items-center justify-center rounded-[10px] border border-white/10 text-[#c8ccd4] backdrop-blur-md transition-all active:scale-95"
+              style={{ background: 'rgba(255,255,255,0.06)' }}
+              title={t(fileLayout === 'grid' ? 'gallery.showFileList' : 'gallery.showThumbnails')}
+              aria-label={t(fileLayout === 'grid' ? 'gallery.showFileList' : 'gallery.showThumbnails')}
+            >
+              {fileLayout === 'grid' ? <List className="h-4 w-4" /> : <LayoutGrid className="h-4 w-4" />}
+            </button>
             {/* View Mode Toggle */}
             {!isSelectionMode && (!selectedSubfolder || selectedSubfolder === '/') && (
               <button
@@ -986,7 +997,67 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
         ) : (
           <div className="relative">
             <AnimatePresence mode="wait">
-              {viewMode === 'folders' ? (
+              {fileLayout === 'list' ? (
+                <div key="filename-list" className="px-3.5 md:px-8 space-y-1">
+                  {viewMode === 'folders' && folderContent.folders.map(folder => {
+                    const key = `folder:${folder.fullPath}`;
+                    const selected = selectedFiles.has(key);
+                    return (
+                      <button
+                        type="button"
+                        key={key}
+                        aria-pressed={isSelectionMode ? selected : undefined}
+                        onClick={() => {
+                          if (isSelectionMode) {
+                            setSelectedFiles(current => {
+                              const next = new Set(current);
+                              if (next.has(key)) next.delete(key);
+                              else next.add(key);
+                              return next;
+                            });
+                          } else setSelectedSubfolder(folder.fullPath);
+                        }}
+                        className={`flex min-h-14 w-full items-center gap-3 rounded-xl border p-3 text-left ${selected ? 'border-blue-500 bg-blue-500/15' : 'border-white/10 bg-[#101217] hover:bg-white/10'}`}
+                      >
+                        <FolderOpen className="h-5 w-5 shrink-0 text-blue-300" />
+                        <span className="min-w-0 flex-1 text-sm text-white [overflow-wrap:anywhere]">{folder.name}</span>
+                        <span className="shrink-0 text-xs text-slate-400">{folder.count}</span>
+                        {isSelectionMode
+                          ? (selected ? <CheckSquare className="h-4 w-4 shrink-0 text-blue-300" /> : <span className="h-4 w-4 shrink-0 rounded border border-white/40" />)
+                          : <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />}
+                      </button>
+                    );
+                  })}
+                  {(viewMode === 'folders' ? folderContent.files : currentFiles).map(file => {
+                    const key = `${file.filename}-${file.subfolder}-${file.type}`;
+                    const selected = selectedFiles.has(key);
+                    const Icon = isVideoFile(file.filename) ? Video : ImageIcon;
+                    return (
+                      <button
+                        type="button"
+                        key={key}
+                        aria-pressed={isSelectionMode ? selected : undefined}
+                        onClick={() => isSelectionMode ? handleSelectionChange(file, !selected) : handleFileClick(file)}
+                        className={`flex min-h-14 w-full items-center gap-3 rounded-xl border p-3 text-left ${selected ? 'border-blue-500 bg-blue-500/15' : 'border-white/10 bg-[#101217] hover:bg-white/10'}`}
+                      >
+                        <Icon className="h-5 w-5 shrink-0 text-slate-400" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm text-white [overflow-wrap:anywhere]">{file.filename}</span>
+                          <span className="mt-1 block text-xs text-slate-400 [overflow-wrap:anywhere]">{file.type}/{file.subfolder || ''}</span>
+                        </span>
+                        {isSelectionMode && (selected
+                          ? <CheckSquare className="h-4 w-4 shrink-0 text-blue-300" />
+                          : <span className="h-4 w-4 shrink-0 rounded border border-white/40" />)}
+                      </button>
+                    );
+                  })}
+                  {(viewMode === 'folders'
+                    ? folderContent.files.length === 0 && folderContent.folders.length === 0
+                    : currentFiles.length === 0) && (
+                    <p className="py-20 text-center text-sm text-slate-400">{t('gallery.noFiles')}</p>
+                  )}
+                </div>
+              ) : viewMode === 'folders' ? (
                 <motion.div
                   key={`recursive-view-${activeTab}-${selectedSubfolder}`}
                   initial={{ opacity: 0, y: 10 }}

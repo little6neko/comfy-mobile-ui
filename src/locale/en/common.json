@@ -609,6 +609,8 @@
         }
     },
     "gallery": {
+        "showFileList": "Show filename list",
+        "showThumbnails": "Show thumbnail previews",
         "title": "Image & Video",
         "selectFile": "Select File",
         "filesTotal": "{{count}} files total",
