@@ -207,6 +207,8 @@ class LauncherAPIHandler(BaseHTTPRequestHandler):
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     """Multi-threaded HTTP server"""
     allow_reuse_address = True
+    # An idle browser connection must not keep the launcher alive after exit.
+    daemon_threads = True
 
 
 class DualProtocolServer(ThreadedHTTPServer):
@@ -257,7 +259,7 @@ class EnhancedExternalComfyUILauncher:
     Enhanced ComfyUI External Launcher with Static File Server
     """
     
-    def __init__(self, api_port: int):
+    def __init__(self, api_port: int, comfyui_pid: Optional[int] = None):
         # Initialize log system first
         self.log_file = Path(__file__).parent / "watchdog.log"
         self.log_buffer = []
@@ -387,6 +389,15 @@ class EnhancedExternalComfyUILauncher:
         # Runtime state
         self.comfyui_process: Optional[subprocess.Popen] = None
         self.is_running = True
+        self._stop_event = threading.Event()
+        self._lifecycle_lock = threading.RLock()
+        self._restarting = False
+        self._shutdown_started = False
+        # psutil.Process retains process creation time to guard against PID reuse.
+        try:
+            self._owner_process = psutil.Process(comfyui_pid) if comfyui_pid else self.find_comfyui_process()
+        except psutil.NoSuchProcess:
+            self._owner_process = None
         self.api_server: Optional[ThreadedHTTPServer] = None
         self.api_thread: Optional[threading.Thread] = None
         
@@ -704,7 +715,8 @@ class EnhancedExternalComfyUILauncher:
         try:
             # Wait for ComfyUI internal systems to be fully ready
             self.log(f"⏳ Waiting 20 seconds for ComfyUI internal systems to initialize...", 'info')
-            time.sleep(20)
+            if self._stop_event.wait(20):
+                return
 
             protocol = "https" if self.tls_keyfile and self.tls_certfile else "http"
             url = f"{protocol}://127.0.0.1:{self.comfyui_port}/internal/logs/subscribe"
@@ -738,10 +750,22 @@ class EnhancedExternalComfyUILauncher:
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
                     cmdline = proc.info.get('cmdline', [])
-                    if cmdline and any('main.py' in arg for arg in cmdline):
-                        # Find ComfyUI process with matching port
-                        if any(str(self.comfyui_port) in arg for arg in cmdline):
-                            return psutil.Process(proc.info['pid'])
+                    for arg in cmdline or []:
+                        if Path(arg).name != Path(self.comfyui_args[0]).name:
+                            continue
+                        script = Path(arg)
+                        if not script.is_absolute():
+                            script = Path(proc.cwd()) / script
+                        if script.resolve() != Path(self.comfyui_args[0]).resolve():
+                            continue
+                        port = 8188
+                        for i, value in enumerate(cmdline):
+                            if value == '--port' and i + 1 < len(cmdline):
+                                port = int(cmdline[i + 1])
+                            elif value.startswith('--port='):
+                                port = int(value.split('=', 1)[1])
+                        if port == self.comfyui_port:
+                            return proc
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
         except Exception as e:
@@ -749,6 +773,13 @@ class EnhancedExternalComfyUILauncher:
         return None
     
     def start_comfyui(self) -> bool:
+        # Serialize spawning with shutdown so a child cannot appear after cleanup.
+        with self._lifecycle_lock:
+            if self._stop_event.is_set():
+                return False
+            return self._start_comfyui()
+
+    def _start_comfyui(self) -> bool:
         """ComfyUI process start"""
         try:
             self.log("[START] Starting ComfyUI process...")
@@ -793,6 +824,8 @@ class EnhancedExternalComfyUILauncher:
                         stderr=subprocess.STDOUT  # Merge stderr to stdout
                     )
             
+            with self._lifecycle_lock:
+                self._owner_process = psutil.Process(self.comfyui_process.pid)
             self.log(f"ComfyUI output will be logged to: {log_file}", 'debug')
             
             self.log(f"[SUCCESS] ComfyUI process started (PID: {self.comfyui_process.pid})")
@@ -821,7 +854,7 @@ class EnhancedExternalComfyUILauncher:
                         # Force kill
                         self.log("[WARN] Force killing ComfyUI process...")
                         self.comfyui_process.kill()
-                        self.comfyui_process.wait()
+                        self.comfyui_process.wait(timeout=5)
                         self.log("[KILL] ComfyUI process force killed")
                 else:
                     # Process was already stopped
@@ -832,26 +865,43 @@ class EnhancedExternalComfyUILauncher:
                 # No process to stop
                 self.log("[STOP] No ComfyUI process to stop (already stopped or never started)")
             
-            # Check for any remaining ComfyUI processes and terminate
-            orphaned_process = self.find_comfyui_process()
+            # Only stop the original owner, never another ComfyUI installation.
+            orphaned_process = self._owner_process if self._owner_alive() else None
             if orphaned_process:
                 self.log(f"[STOP] Found orphaned ComfyUI process (PID: {orphaned_process.pid}), terminating...")
                 try:
                     orphaned_process.terminate()
                     orphaned_process.wait(timeout=5)
                     self.log("[SUCCESS] Orphaned ComfyUI process terminated")
-                except:
-                    self.log("[WARN] Could not terminate orphaned process")
+                except psutil.NoSuchProcess:
+                    pass
+                except psutil.TimeoutExpired:
+                    orphaned_process.kill()
+                    orphaned_process.wait(timeout=5)
             
             return True
             
         except Exception as e:
             self.log(f"[ERROR] Error stopping ComfyUI: {e}")
-            # Error even though process reference is initialized
-            self.comfyui_process = None
             return False
     
     def restart_comfyui(self) -> bool:
+        with self._lifecycle_lock:
+            if self._restarting or self._stop_event.is_set():
+                return False
+            self._restarting = True
+        success = False
+        try:
+            success = self._restart_comfyui()
+            return success
+        finally:
+            with self._lifecycle_lock:
+                if not success:
+                    self.is_running = False
+                    self._stop_event.set()
+                self._restarting = False
+
+    def _restart_comfyui(self) -> bool:
         """ComfyUI manual restart (only executed by API request)"""
         restart_start_time = time.time()
         self.log("Manual restart sequence initiated", 'restart')
@@ -876,12 +926,14 @@ class EnhancedExternalComfyUILauncher:
         if stop_success:
             self.log(f"Process stop completed successfully in {stop_duration:.2f}s", 'success')
         else:
-            self.log(f"Process stop had issues but continuing (took {stop_duration:.2f}s)", 'warning')
+            self.log(f"Process stop failed (took {stop_duration:.2f}s)", 'error')
+            return False
         
         # 2. Wait time
         self.log("Step 2/3: Waiting for clean shutdown...", 'restart')
         wait_time = 3
-        time.sleep(wait_time)
+        if self._stop_event.wait(wait_time):
+            return False
         
         # Execution settings check and logging
         self.log("Step 3/3: Starting new ComfyUI process", 'restart')
@@ -901,7 +953,8 @@ class EnhancedExternalComfyUILauncher:
             self.log(f"Process start completed in {start_duration:.2f}s", 'success')
             
             # 4. Process status check
-            time.sleep(2)  # Ensure process has started
+            if self._stop_event.wait(2):
+                return False
             if self.comfyui_process and self.comfyui_process.poll() is not None:
                 # Process has already terminated - error occurred
                 self.log(f"ComfyUI process exited immediately with code: {self.comfyui_process.returncode}", 'error')
@@ -926,11 +979,12 @@ class EnhancedExternalComfyUILauncher:
             
             # 5. Response check (longer wait)
             self.log("Waiting for ComfyUI to become responsive...", 'restart')
-            wait_start = time.time()
-            max_wait = 45  # 45 seconds wait (longer)
+            wait_start = time.monotonic()
+            max_wait = 180  # Allow large custom-node installations to initialize.
             
-            while time.time() - wait_start < max_wait:
-                time.sleep(2)
+            while time.monotonic() - wait_start < max_wait:
+                if self._stop_event.wait(2):
+                    return False
                 
                 # Check if process is still running
                 if self.comfyui_process and self.comfyui_process.poll() is not None:
@@ -938,7 +992,7 @@ class EnhancedExternalComfyUILauncher:
                     return False
                 
                 if self.is_comfyui_responsive():
-                    response_time = time.time() - wait_start
+                    response_time = time.monotonic() - wait_start
                     total_time = time.time() - restart_start_time
                     self.log(f"ComfyUI is now responsive! (response in {response_time:.2f}s, total restart {total_time:.2f}s)", 'success')
 
@@ -946,17 +1000,17 @@ class EnhancedExternalComfyUILauncher:
 
                     return True
                 else:
-                    elapsed = time.time() - wait_start
+                    elapsed = time.monotonic() - wait_start
                     self.log(f"Still waiting for response... ({elapsed:.1f}s/{max_wait}s)", 'debug')
             
-            # No response after 45 seconds
+            # A failed restart must not leave the launcher detached indefinitely.
             total_time = time.time() - restart_start_time
             self.log(f"Process started but not responsive after {max_wait}s (total restart time: {total_time:.2f}s)", 'warning')
             
             # Check if process is still running
             if self.comfyui_process and self.comfyui_process.poll() is None:
                 self.log("ComfyUI process is still running - may need more time to load", 'info')
-                return True  # Process is still running, consider it a success
+                return False  # A startup timeout must not leave a detached launcher.
             else:
                 self.log("ComfyUI process has stopped - restart failed", 'error')
                 return False
@@ -966,6 +1020,25 @@ class EnhancedExternalComfyUILauncher:
             self.log(f"Failed to start new process (total attempt time: {total_time:.2f}s)", 'error')
             return False
     
+    def _owner_alive(self) -> bool:
+        try:
+            return (self._owner_process is not None
+                    and self._owner_process.is_running()
+                    and self._owner_process.status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD))
+        except psutil.NoSuchProcess:
+            return False
+        except psutil.AccessDenied:
+            return True  # Lack of permission is not proof of process exit.
+
+    def _watch_owner(self):
+        while not self._stop_event.wait(0.5):
+            with self._lifecycle_lock:
+                if not self._restarting and not self._owner_alive():
+                    self.log("ComfyUI process exited; stopping mobile launcher", 'info')
+                    self.is_running = False
+                    self._stop_event.set()
+                    return
+
     def _console_input_loop(self):
         """Console input handler for manual commands"""
         while self.is_running:
@@ -996,6 +1069,11 @@ class EnhancedExternalComfyUILauncher:
 
         while self.is_running:
             try:
+                if self._restarting:
+                    logs_subscribed = False
+                    server_detected = False
+                    self._stop_event.wait(0.5)
+                    continue
                 # ComfyUI status check only, no automatic restart
                 is_responsive = self.is_comfyui_responsive()
                 if not is_responsive:
@@ -1025,22 +1103,21 @@ class EnhancedExternalComfyUILauncher:
 
                 # Use faster check interval during initial startup, slower after server is detected
                 current_interval = self.initial_check_interval if not server_detected else self.check_interval
-                if not server_detected:
-                    self.log(f"[MONITOR] Using fast check interval: {current_interval}s (waiting for server)", 'debug')
-                time.sleep(current_interval)
+                self._stop_event.wait(current_interval)
                 
             except KeyboardInterrupt:
                 self.log("[STOP] Launcher interrupted by user")
                 break
             except Exception as e:
                 self.log(f"[ERROR] Unexpected error in monitor loop: {e}")
-                time.sleep(5)
+                self._stop_event.wait(5)
         
         self.log("[LAUNCHER] Enhanced External Launcher monitoring stopped")
     
     def run(self):
         """Run launcher service"""
         try:
+            threading.Thread(target=self._watch_owner, daemon=True).start()
             self.log("[LAUNCHER] Starting Enhanced External Launcher", 'success')
             self.log(f"ComfyUI Path: {self.comfyui_dir}", 'info')
             self.log(f"ComfyUI Port: {self.comfyui_port}", 'info')
@@ -1059,9 +1136,17 @@ class EnhancedExternalComfyUILauncher:
 
     def shutdown(self):
         """Graceful shutdown"""
-        self.is_running = False
+        with self._lifecycle_lock:
+            if self._shutdown_started:
+                return
+            self._shutdown_started = True
+            self.is_running = False
+            self._stop_event.set()
         self.stop_api_server()
-        self.stop_comfyui()
+        # Only clean up a child this launcher started, never discover and kill
+        # an unrelated/new manually launched ComfyUI during shutdown.
+        if self.comfyui_process is not None:
+            self.stop_comfyui()
         self.log("[LAUNCHER] Enhanced External Launcher shutdown complete")
 
 
@@ -1093,6 +1178,7 @@ def main():
     
     parser = argparse.ArgumentParser(description='Enhanced ComfyUI External Launcher & Server')
     parser.add_argument('--api-port', type=int, required=True, help='Server port (required)')
+    parser.add_argument('--comfyui-pid', type=int, help='ComfyUI process to follow')
     
     args = parser.parse_args()
     
@@ -1105,7 +1191,7 @@ def main():
         sys.exit(1)
     
     print("[INIT] Starting launcher service...")
-    launcher = EnhancedExternalComfyUILauncher(args.api_port)
+    launcher = EnhancedExternalComfyUILauncher(args.api_port, args.comfyui_pid)
     launcher.run()
 
 

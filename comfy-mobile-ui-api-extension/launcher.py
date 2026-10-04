@@ -170,7 +170,8 @@ class ComfyUILauncher:
                 sys.executable,
                 # Force script name for clarity
                 str(Path(__file__).parent / "launcher_service.py"),
-                '--api-port', str(self.launcher_port)  # 9188 directly passed
+                '--api-port', str(self.launcher_port),
+                '--comfyui-pid', str(os.getpid())
             ]
             
             print(f"[START] Starting external launcher: {' '.join(cmd)}")
