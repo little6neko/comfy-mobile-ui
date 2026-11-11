@@ -17,6 +17,7 @@ import {
   type FilePreviewRequestOptions,
 } from '@/shared/utils/FilePreviewResolver';
 import { getGalleryPermissions } from '@/shared/utils/GalleryPermissionUtils';
+import { isFhsImagePath } from '@/shared/utils/GallerySelection';
 import { InlineImagePreview } from '@/components/media/InlineImagePreview';
 import { InlineVideoPreview } from '@/components/media/InlineVideoPreview';
 import { OutputsGallery } from '@/components/media/OutputsGallery';
@@ -54,6 +55,7 @@ interface WidgetValueEditorProps {
   onFilePreview: (filename: string, options?: FilePreviewRequestOptions) => void;
   onFileUpload: (nodeId: number, paramName: string) => void;
   onFileUploadDirect?: (nodeId: number, paramName: string, file: File) => void;
+  onPathFileSelected?: (nodeId: number, paramName: string, value: string) => void;
   // Optional ComfyGraphNode context
   node?: ComfyGraphNode;
   widget?: IComfyWidget;
@@ -113,6 +115,7 @@ export const WidgetValueEditor: React.FC<WidgetValueEditorProps> = ({
   onFilePreview,
   onFileUpload,
   onFileUploadDirect,
+  onPathFileSelected,
   // ComfyGraphNode context
   node,
   widget,
@@ -121,6 +124,7 @@ export const WidgetValueEditor: React.FC<WidgetValueEditorProps> = ({
 }) => {
   const { t } = useTranslation();
   const [showAlbumModal, setShowAlbumModal] = useState(false);
+  const isPathImage = isFhsImagePath(node?.type, param.name);
   const allowVhsPath = hasVhsPathExtensions(widget?.options, param.config);
   const filePreviewOptions = allowVhsPath ? { allowVhsPath: true } : undefined;
 
@@ -399,7 +403,8 @@ export const WidgetValueEditor: React.FC<WidgetValueEditorProps> = ({
               onClick={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                onStartEditing(nodeId, param.name, currentValue);
+                if (isPathImage) setShowAlbumModal(true);
+                else onStartEditing(nodeId, param.name, currentValue);
               }}
  className={`text-[11.5px] font-mono px-1.5 py-0.5 rounded inline-flex items-center max-w-[250px] md:max-w-[350px] align-bottom transition-all duration-200 hover:shadow-sm active:scale-95 cursor-pointer border ${isModified
                 ? 'bg-[#10b981] dark:bg-[#10b981] text-white dark:text-white border-[#10b981] dark:border-[#10b981] hover:bg-[#059669] dark:hover:bg-[#059669]'
@@ -462,6 +467,17 @@ export const WidgetValueEditor: React.FC<WidgetValueEditorProps> = ({
           )}
 
         </div>
+
+        {isPathImage && (
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setShowAlbumModal(true)}>
+              <Images className="mr-1 h-4 w-4" />{t('gallery.selectFile')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => onStartEditing(nodeId, param.name, currentValue)}>
+              <Edit className="mr-1 h-4 w-4" />{t('common.edit')}
+            </Button>
+          </div>
+        )}
 
         {/* Prominent Upload Button for Image/Video Files */}
         {currentValue != null && typeof currentValue === 'string' && (isImageFile(currentValue) || isVideoFile(currentValue)) && (
@@ -617,9 +633,18 @@ export const WidgetValueEditor: React.FC<WidgetValueEditorProps> = ({
           >
             <OutputsGallery
               isFileSelectionMode={true}
+              selectionMode={isPathImage ? 'comfy-relative-path' : 'input-copy'}
               {...getGalleryPermissions(param.name, currentValue, param.possibleValues)}
+              allowVideos={isPathImage ? false : getGalleryPermissions(param.name, currentValue, param.possibleValues).allowVideos}
               initialFolder="input"
               onFileSelect={(filename) => {
+                if (isPathImage) {
+                  // Commit directly; delayed callbacks would capture the old edit state.
+                  if (onPathFileSelected) onPathFileSelected(nodeId, param.name, filename);
+                  else onStartEditing(nodeId, param.name, filename);
+                  setShowAlbumModal(false);
+                  return;
+                }
                 // For IMAGE/VIDEO types, directly update widget value without editing mode
                 // Start editing mode, set value, and save immediately
                 onStartEditing(nodeId, param.name, filename);

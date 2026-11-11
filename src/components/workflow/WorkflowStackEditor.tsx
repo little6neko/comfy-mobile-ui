@@ -409,6 +409,7 @@ const StackNode: React.FC<StackNodeProps> = ({ node, workflowId, widgetEditor, o
                                                     onFilePreview={(filename, options) => fileOperations.handleFilePreview(filename, options)}
                                                     onFileUpload={(nid, pname) => fileOperations.handleFileUpload(nid, pname, fileInputRef)}
                                                     onFileUploadDirect={fileOperations.handleFileUploadDirect}
+                                                    onPathFileSelected={widgetEditor.setWidgetValue}
                                                     node={node}
                                                     widget={node.getWidgets ? node.getWidgets()[((param as any).widgetIndex || 0)] : undefined}
                                                     themeOverride={themeOverride}

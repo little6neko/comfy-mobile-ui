@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { resolveGallerySelection, type GallerySelectionMode } from '@/shared/utils/GallerySelection';
 import { ArrowLeft, Image as ImageIcon, Video, Loader2, RefreshCw, Server, AlertCircle, CheckCircle, Trash2, FolderOpen, Check, X, MousePointer, ChevronLeft, CheckSquare, Copy, LayoutGrid, FolderTree, ChevronRight, List } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -259,6 +260,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
 };
 
 interface OutputsGalleryProps {
+  selectionMode?: GallerySelectionMode;
   isFileSelectionMode?: boolean;
   allowImages?: boolean;
   allowVideos?: boolean;
@@ -269,6 +271,7 @@ interface OutputsGalleryProps {
 }
 
 export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
+  selectionMode = 'input-copy',
   isFileSelectionMode = false,
   allowImages = true,
   allowVideos = true,
@@ -385,8 +388,9 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
     // File selection mode: handle file selection with auto-copy if needed
     if (isFileSelectionMode && onFileSelect) {
       try {
-        // If file is not in input folder, copy it to input first
-        if (file.type !== 'input') {
+        const selection = resolveGallerySelection(file, selectionMode);
+        // Ordinary loaders need an input copy; path loaders use the source directly.
+        if (selection.copyToInput) {
           setLoading(true);
           const result = await comfyFileService.copyFiles([{
             filename: file.filename,
@@ -397,16 +401,14 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
           if (result.success) {
             console.log(`✅ File copied to input folder: ${file.filename} `);
             // Return the full path including subfolder since it's now in input
-            const fullPath = file.subfolder ? `${file.subfolder}/${file.filename}` : file.filename;
-            onFileSelect(fullPath);
+            onFileSelect(selection.value);
           } else {
             setError(`${t('gallery.copyError') || 'Failed to copy file'}: ${result.error}`);
             return;
           }
         } else {
           // File is already in input, use directly with full path including subfolder
-          const fullPath = file.subfolder ? `${file.subfolder}/${file.filename}` : file.filename;
-          onFileSelect(fullPath);
+          onFileSelect(selection.value);
         }
       } catch (error) {
         console.error('Failed to process file selection:', error);
