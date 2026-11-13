@@ -1968,6 +1968,7 @@ const WorkflowEditor: React.FC = () => {
 
   // File operations
   const fileOperations = useFileOperations({
+    getNodeType: (nodeId) => comfyGraphRef.current?.getNodeById(nodeId)?.type,
     onSetWidgetValue: widgetEditor.setWidgetValue
   });
 

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isFhsImagePath, resolveGallerySelection } from '@/shared/utils/GallerySelection';
 import { ComfyFileService } from '@/infrastructure/api/ComfyFileService';
 import { isImageFile, isVideoFile } from '@/shared/utils/ComfyFileUtils';
 import { extractVideoThumbnail } from '@/shared/utils/VideoUtils';
@@ -36,9 +37,10 @@ interface ErrorDialog {
 
 interface UseFileOperationsProps {
   onSetWidgetValue: (nodeId: number, paramName: string, value: any) => void;
+  getNodeType?: (nodeId: number) => string | undefined;
 }
 
-export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) => {
+export const useFileOperations = ({ onSetWidgetValue, getNodeType }: UseFileOperationsProps) => {
   const { t } = useTranslation();
   const { url: serverUrl } = useConnectionStore();
   
@@ -330,7 +332,10 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
       if (result) {
         const filename = result.name;
         const subfolder = result.subfolder;
-        const fullPath = subfolder ? `${subfolder}/${filename}` : filename;
+        const fullPath = resolveGallerySelection(
+          { filename, subfolder, type: 'input' },
+          isFhsImagePath(getNodeType?.(nodeId), paramName) ? 'comfy-relative-path' : 'input-copy'
+        ).value;
         
         // If it's a video file, also extract and upload thumbnail
         let thumbnailUploaded = false;
@@ -509,7 +514,10 @@ export const useFileOperations = ({ onSetWidgetValue }: UseFileOperationsProps) 
       if (result) {
         const filename = result.name;
         const subfolder = result.subfolder;
-        const fullPath = subfolder ? `${subfolder}/${filename}` : filename;
+        const fullPath = resolveGallerySelection(
+          { filename, subfolder, type: 'input' },
+          isFhsImagePath(getNodeType?.(nodeId), paramName) ? 'comfy-relative-path' : 'input-copy'
+        ).value;
         
         // If it's a video file, also extract and upload thumbnail
         let thumbnailUploaded = false;

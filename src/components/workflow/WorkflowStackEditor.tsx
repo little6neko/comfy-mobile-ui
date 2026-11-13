@@ -185,6 +185,7 @@ const StackNode: React.FC<StackNodeProps> = ({ node, workflowId, widgetEditor, o
     } = widgetEditor;
 
     const fileOperations = useFileOperations({
+        getNodeType: (nodeId) => node.id === nodeId ? node.type : undefined,
         onSetWidgetValue: (nodeId, paramName, value) => setWidgetValue(nodeId, paramName, value)
     });
 
