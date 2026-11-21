@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Content as DialogContent } from '@radix-ui/react-dialog';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { SimpleConfirmDialog } from '@/components/ui/SimpleConfirmDialog';
+import { Dialog, DialogClose, DialogDescription, DialogOverlay, DialogPortal, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { ComfyFileService } from '@/infrastructure/api/ComfyFileService';
 import { useConnectionStore } from '@/ui/store/connectionStore';
 import { FramesEditorCanvas, type FramesEditorTool } from './FramesEditorCanvas';
@@ -106,6 +108,8 @@ export const FramesEditorWorkspace = ({
     annotationsFromInfo(initialParse.ok ? initialParse.value : createResetFramesEditorInfo(initialParse)),
   ));
   const [frameIndex, setFrameIndex] = useState(initialParse.ok ? initialParse.value.frame_index : 0);
+  const [frameJumpInput, setFrameJumpInput] = useState<string | null>(null);
+  const [frameJumpInvalid, setFrameJumpInvalid] = useState(false);
   const [tool, setTool] = useState<FramesEditorTool>('positive');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -368,6 +372,7 @@ export const FramesEditorWorkspace = ({
       <main className="relative min-h-0 flex-1 bg-black">
         {canvasReady && frameLoad.status === 'ready' ? (
           <FramesEditorCanvas
+            key={frameLoad.url}
             imageUrl={frameLoad.url}
             annotations={history.present}
             tool={tool}
@@ -423,7 +428,71 @@ export const FramesEditorWorkspace = ({
         <div className="shrink-0 border-t border-white/10 bg-[#10131a] px-4 py-3">
           <div className="mb-2 flex items-center justify-between text-xs text-slate-300">
             <span>{t('framesEditor.frame')}</span>
-            <span className="font-mono">{safeFrameIndex + 1} / {frames.length}</span>
+            <Dialog
+              open={frameJumpInput !== null}
+              onOpenChange={open => {
+                setFrameJumpInput(open ? String(safeFrameIndex + 1) : null);
+                setFrameJumpInvalid(false);
+              }}
+            >
+              <DialogTrigger asChild>
+                <button
+                  type="button"
+                  className="min-h-11 rounded-lg bg-white/5 px-3 font-mono text-blue-200 hover:bg-white/10"
+                  aria-label={`${t('framesEditor.jumpToFrame')}: ${safeFrameIndex + 1} / ${frames.length}`}
+                >
+                  {safeFrameIndex + 1} / {frames.length}
+                </button>
+              </DialogTrigger>
+              <DialogPortal>
+                <DialogOverlay className="z-[200001] bg-black/60" />
+                <DialogContent className="fixed left-1/2 top-1/2 z-[200002] w-[calc(100%-2rem)] max-w-xs -translate-x-1/2 -translate-y-1/2 rounded-xl border border-white/10 bg-[#10131a] p-4 text-white shadow-xl">
+                  <form
+                    noValidate
+                    className="space-y-3"
+                    onSubmit={event => {
+                      event.preventDefault();
+                      const value = frameJumpInput?.trim() ?? '';
+                      const frame = Number(value);
+                      if (!/^\d+$/.test(value) || frame < 1 || frame > frames.length) {
+                        setFrameJumpInvalid(true);
+                        return;
+                      }
+                      setFrameIndex(frame - 1);
+                      setFrameJumpInput(null);
+                    }}
+                  >
+                    <DialogTitle className="font-semibold">{t('framesEditor.jumpToFrame')}</DialogTitle>
+                    <DialogDescription className={`text-sm ${frameJumpInvalid ? 'text-red-300' : 'text-slate-300'}`} role={frameJumpInvalid ? 'alert' : undefined}>
+                      {t('framesEditor.frameRange', { count: frames.length })}
+                    </DialogDescription>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={frameJumpInput ?? ''}
+                      onChange={event => {
+                        setFrameJumpInput(event.target.value);
+                        setFrameJumpInvalid(false);
+                      }}
+                      onFocus={event => event.currentTarget.select()}
+                      aria-label={t('framesEditor.frame')}
+                      aria-invalid={frameJumpInvalid}
+                      className="min-h-11 w-full rounded-lg border border-white/20 bg-black/30 px-3 text-base"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <DialogClose asChild>
+                        <button type="button" className="min-h-11 rounded-lg px-3 text-sm text-slate-300 hover:bg-white/10">
+                          {t('common.cancel')}
+                        </button>
+                      </DialogClose>
+                      <button type="submit" className="min-h-11 rounded-lg bg-blue-600 px-3 text-sm font-semibold hover:bg-blue-500">
+                        {t('common.confirm')}
+                      </button>
+                    </div>
+                  </form>
+                </DialogContent>
+              </DialogPortal>
+            </Dialog>
           </div>
           <input
             type="range"

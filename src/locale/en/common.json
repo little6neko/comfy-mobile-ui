@@ -1698,6 +1698,8 @@
         "clear": "Clear",
         "retry": "Retry",
         "frame": "Frame",
+        "jumpToFrame": "Jump to frame",
+        "frameRange": "Enter a frame number from 1 to {{count}}.",
         "status": {
             "empty": "Run this node to load a preview",
             "loading": "Node is running…",

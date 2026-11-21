@@ -6,6 +6,7 @@ import {
   normalizeFramesEditorBox,
   type FramesEditorAnnotations,
   type FramesEditorPoint,
+  type FramesEditorRect,
   type FramesEditorSize,
 } from './model';
 
@@ -34,6 +35,39 @@ interface BoxDrag {
 }
 
 const BOX_DRAG_THRESHOLD_CSS_PX = 6;
+const TAP_THRESHOLD_CSS_PX = 8;
+const MAX_ZOOM = 6;
+
+type CanvasView = { zoom: number; x: number; y: number };
+const DEFAULT_VIEW: CanvasView = { zoom: 1, x: 0, y: 0 };
+
+const getViewRect = (fit: FramesEditorRect, container: FramesEditorSize, view: CanvasView): FramesEditorRect => {
+  if (view.zoom === 1) return fit;
+  const width = fit.width * view.zoom;
+  const height = fit.height * view.zoom;
+  const position = (offset: number, viewport: number, size: number) => size <= viewport
+    ? (viewport - size) / 2
+    : Math.max(viewport - size, Math.min(0, offset));
+  return {
+    x: position(view.x, container.width, width),
+    y: position(view.y, container.height, height),
+    width,
+    height,
+    scale: fit.scale * view.zoom,
+  };
+};
+
+const getPinch = (touches: Map<number, FramesEditorPoint>) => {
+  const points = touches.values();
+  const first = points.next().value;
+  const second = points.next().value;
+  if (!first || !second) return null;
+  return {
+    x: (first.x + second.x) / 2,
+    y: (first.y + second.y) / 2,
+    distance: Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)),
+  };
+};
 
 export const FramesEditorCanvas = ({
   imageUrl,
@@ -48,12 +82,26 @@ export const FramesEditorCanvas = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState<FramesEditorSize>({ width: 0, height: 0 });
   const [loadedImage, setLoadedImage] = useState<LoadedImage | null>(null);
+  const [view, setView] = useState(DEFAULT_VIEW);
   const [boxDrag, setBoxDrag] = useState<BoxDrag | null>(null);
+  const boxDragRef = useRef<BoxDrag | null>(null);
+  const touches = useRef(new Map<number, FramesEditorPoint>());
+  const pinching = useRef(false);
+  const pendingTap = useRef<{
+    start: FramesEditorPoint;
+    kind: 'positive' | 'negative';
+  } | null>(null);
+
+  const updateBoxDrag = (drag: BoxDrag | null) => {
+    boxDragRef.current = drag;
+    setBoxDrag(drag);
+  };
 
   const imageSize = loadedImage?.url === imageUrl ? loadedImage.size : null;
-  const displayRect = useMemo(() => (
+  const fitRect = useMemo(() => (
     imageSize ? calculateContainRect(containerSize, imageSize) : null
   ), [containerSize, imageSize]);
+  const displayRect = fitRect ? getViewRect(fitRect, containerSize, view) : null;
 
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const handleContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -80,6 +128,22 @@ export const FramesEditorCanvas = ({
     if (disabled || !displayRect || !imageSize) return;
     const displayPoint = getDisplayPoint(event);
     if (!displayPoint) return;
+
+    if (event.pointerType === 'touch') {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      touches.current.set(event.pointerId, displayPoint);
+      if (touches.current.size > 1 || pinching.current) {
+        // Once a pinch starts, neither finger may finish an annotation.
+        pinching.current = true;
+        pendingTap.current = null;
+        if (boxDragRef.current) updateBoxDrag(null);
+        return;
+      }
+    } else if (touches.current.size > 0) {
+      return;
+    }
+
     const imagePoint = mapDisplayPointToImage(displayPoint, displayRect, imageSize);
     if (!imagePoint) return;
 
@@ -87,7 +151,7 @@ export const FramesEditorCanvas = ({
       if (event.button !== 0) return;
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
-      setBoxDrag({
+      updateBoxDrag({
         pointerId: event.pointerId,
         startImage: imagePoint,
         currentImage: imagePoint,
@@ -101,29 +165,64 @@ export const FramesEditorCanvas = ({
     else return;
 
     event.preventDefault();
-    onAddPoint(kind, imagePoint);
+    if (event.pointerType === 'touch') {
+      pendingTap.current = { start: displayPoint, kind };
+    } else {
+      onAddPoint(kind, imagePoint);
+    }
   };
 
+  const isTapPosition = (point: FramesEditorPoint, start: FramesEditorPoint) => (
+    Math.hypot(point.x - start.x, point.y - start.y) <= TAP_THRESHOLD_CSS_PX
+  );
+
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!boxDrag || boxDrag.pointerId !== event.pointerId || !displayRect || !imageSize) return;
+    if (disabled) return;
     const displayPoint = getDisplayPoint(event);
     if (!displayPoint) return;
+    if (event.pointerType === 'touch') {
+      if (!touches.current.has(event.pointerId)) return;
+      const previous = getPinch(touches.current);
+      touches.current.set(event.pointerId, displayPoint);
+      if (pinching.current) {
+        const next = getPinch(touches.current);
+        if (fitRect && previous && next) {
+          setView(current => {
+            const zoom = Math.max(1, Math.min(MAX_ZOOM, current.zoom * next.distance / previous.distance));
+            if (zoom === 1) return DEFAULT_VIEW;
+            const rect = getViewRect(fitRect, containerSize, current);
+            const ratio = zoom / current.zoom;
+            // Keep the image point under the old midpoint at the new midpoint.
+            return {
+              zoom,
+              x: next.x - (previous.x - rect.x) * ratio,
+              y: next.y - (previous.y - rect.y) * ratio,
+            };
+          });
+        }
+        return;
+      }
+      if (pendingTap.current && !isTapPosition(displayPoint, pendingTap.current.start)) {
+        pendingTap.current = null;
+      }
+    }
+
+    const drag = boxDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !displayRect || !imageSize) return;
     const imagePoint = mapDisplayPointToImage(displayPoint, displayRect, imageSize, true);
     if (!imagePoint) return;
     event.preventDefault();
-    setBoxDrag(current => current && current.pointerId === event.pointerId
-      ? { ...current, currentImage: imagePoint }
-      : current);
+    updateBoxDrag({ ...drag, currentImage: imagePoint });
   };
 
   const finishBoxDrag = (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
-    if (!boxDrag || boxDrag.pointerId !== event.pointerId) return;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    let completedDrag = boxDrag;
+    const drag = boxDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    updateBoxDrag(null);
+    if (cancelled || disabled) return;
+    let completedDrag = drag;
     const endDisplayPoint = getDisplayPoint(event);
-    if (!cancelled && endDisplayPoint && displayRect && imageSize) {
+    if (endDisplayPoint && displayRect && imageSize) {
       const endImagePoint = mapDisplayPointToImage(
         endDisplayPoint,
         displayRect,
@@ -132,9 +231,6 @@ export const FramesEditorCanvas = ({
       );
       if (endImagePoint) completedDrag = { ...completedDrag, currentImage: endImagePoint };
     }
-    setBoxDrag(null);
-    if (cancelled) return;
-
     const width = Math.abs(completedDrag.currentImage.x - completedDrag.startImage.x)
       * (displayRect?.scale ?? 0);
     const height = Math.abs(completedDrag.currentImage.y - completedDrag.startImage.y)
@@ -143,12 +239,38 @@ export const FramesEditorCanvas = ({
     onAddBox(normalizeFramesEditorBox(completedDrag.startImage, completedDrag.currentImage));
   };
 
+  const finishPointer = (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
+    if (event.pointerType === 'touch') {
+      if (!touches.current.delete(event.pointerId)) return;
+      if (pinching.current) {
+        if (touches.current.size === 0) pinching.current = false;
+        return;
+      }
+      const tap = pendingTap.current;
+      pendingTap.current = null;
+      if (tap && !cancelled && !disabled && displayRect && imageSize) {
+        const displayPoint = getDisplayPoint(event);
+        if (displayPoint && isTapPosition(displayPoint, tap.start)) {
+          const point = mapDisplayPointToImage(displayPoint, displayRect, imageSize);
+          if (point) onAddPoint(tap.kind, point);
+        }
+      }
+    }
+    finishBoxDrag(event, cancelled);
+  };
+
   const dragBox = boxDrag
     ? normalizeFramesEditorBox(boxDrag.startImage, boxDrag.currentImage)
     : null;
   const scale = Math.max(displayRect?.scale ?? 1, 0.0001);
   const pointRadius = 7 / scale;
   const strokeWidth = 2 / scale;
+  const displayStyle = displayRect ? {
+    left: displayRect.x,
+    top: displayRect.y,
+    width: displayRect.width,
+    height: displayRect.height,
+  } : undefined;
 
   return (
     <div
@@ -159,8 +281,9 @@ export const FramesEditorCanvas = ({
       aria-label={ariaLabel}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
-      onPointerUp={event => finishBoxDrag(event)}
-      onPointerCancel={event => finishBoxDrag(event, true)}
+      onPointerUp={event => finishPointer(event)}
+      onPointerCancel={event => finishPointer(event, true)}
+      onLostPointerCapture={event => finishPointer(event, true)}
       onContextMenu={event => event.preventDefault()}
     >
       <img
@@ -168,7 +291,8 @@ export const FramesEditorCanvas = ({
         alt=""
         aria-hidden="true"
         draggable={false}
-        className="pointer-events-none absolute inset-0 h-full w-full object-contain"
+        className={`pointer-events-none absolute max-w-none ${displayStyle ? '' : 'inset-0 h-full w-full object-contain'}`}
+        style={displayStyle}
         onLoad={(event) => {
           setLoadedImage({
             url: imageUrl,
@@ -184,12 +308,7 @@ export const FramesEditorCanvas = ({
       {displayRect && imageSize && (
         <svg
           className="pointer-events-none absolute overflow-hidden"
-          style={{
-            left: displayRect.x,
-            top: displayRect.y,
-            width: displayRect.width,
-            height: displayRect.height,
-          }}
+          style={displayStyle}
           viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
           aria-hidden="true"
         >
