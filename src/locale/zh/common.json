@@ -607,6 +607,9 @@
     },
     "gallery": {
         "showFileList": "切换为文件名列表",
+        "searchFiles": "搜索文件",
+        "searchPlaceholder": "搜索文件名或目录…",
+        "noSearchResults": "没有匹配的文件",
         "showThumbnails": "切换为缩略图预览",
         "title": "图像和视频",
         "selectFile": "选择文件",

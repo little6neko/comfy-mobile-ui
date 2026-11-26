@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react';
 import { resolveGallerySelection, type GallerySelectionMode } from '@/shared/utils/GallerySelection';
-import { ArrowLeft, Image as ImageIcon, Video, Loader2, RefreshCw, Server, AlertCircle, CheckCircle, Trash2, FolderOpen, Check, X, MousePointer, ChevronLeft, CheckSquare, Copy, LayoutGrid, FolderTree, ChevronRight, List } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, Video, Loader2, RefreshCw, Server, AlertCircle, CheckCircle, Trash2, FolderOpen, Check, X, MousePointer, ChevronLeft, CheckSquare, Copy, LayoutGrid, FolderTree, ChevronRight, List, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ import { isImageFile, isVideoFile } from '@/shared/utils/ComfyFileUtils';
 
 type TabType = 'images' | 'videos';
 type FolderType = 'input' | 'output' | 'temp' | 'all';
+const galleryFileKey = (file: IComfyFileInfo) => `${file.filename}-${file.subfolder}-${file.type}`;
 
 // Utility function to find matching image file for a video
 const findMatchingImageFile = (
@@ -303,15 +304,23 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
   const [viewMode, setViewMode] = useState<'flat' | 'folders'>('flat');
   const [fileLayout, setFileLayout] = useState<'grid' | 'list'>('grid');
   const [selectedSubfolder, setSelectedSubfolder] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const searchId = useId();
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchTerm = fileLayout === 'list' && searchOpen ? searchInput.trim().toLowerCase() : '';
+  const isSearching = searchTerm !== '';
 
   // Selection mode states
   const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [storedSelection, setSelectedFiles] = useState<Set<string>>(new Set());
   // Move panel state
   const [showMovePanel, setShowMovePanel] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 
   const navigate = useNavigate();
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { url: serverUrl, isConnected, hasExtension, isCheckingExtension, checkExtension } = useConnectionStore();
 
   // Memoize the service instance to prevent infinite loops
@@ -377,6 +386,21 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
       setSelectedSubfolder(null);
     }
   }, [isConnected, hasExtension, loadFiles, activeFolder, activeTab]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [activeFolder, activeTab, viewMode, selectedSubfolder, searchTerm]);
+
+  const updateSearchInput = (value: string) => {
+    // Leaving a search can hide selected files from deeper folders again.
+    if (isSearching && !value.trim()) setSelectedFiles(new Set());
+    setSearchInput(value);
+  };
+
+  const closeSearch = () => {
+    updateSearchInput('');
+    setSearchOpen(false);
+  };
 
 
   const handleRetryConnection = () => {
@@ -455,8 +479,9 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
   };
 
   const handlePreviewRetry = (filename: string) => {
-    const allFiles = [...files.images, ...files.videos];
-    const file = allFiles.find(f => f.filename === filename);
+    const file = previewFile?.filename === filename
+      ? previewFile
+      : navigableFiles.find(f => f.filename === filename);
     if (file) {
       handleFileClick(file);
     }
@@ -503,11 +528,6 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
     }
   };
 
-  // Check if any folder is selected
-  const isAnyFolderSelected = useMemo(() => {
-    return Array.from(selectedFiles).some(key => key.startsWith('folder:'));
-  }, [selectedFiles]);
-
   // Selection mode handlers
   const handleSelectionChange = (file: IComfyFileInfo, selected: boolean, isFolder: boolean = false) => {
     const fileKey = isFolder
@@ -526,44 +546,6 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
     }
 
     setSelectedFiles(newSelected);
-  };
-
-  const handleSelectAll = (visibleOnly: boolean = true) => {
-    const newSelected = new Set(selectedFiles);
-
-    if (viewMode === 'folders') {
-      // In folder mode, select only files (not folders) in the CURRENT path
-      const currentPathFilesKeys = folderContent.files.map(f => `${f.filename}-${f.subfolder}-${f.type}`);
-      const allCurrentFilesSelected = currentPathFilesKeys.every(key => selectedFiles.has(key));
-
-      if (allCurrentFilesSelected) {
-        currentPathFilesKeys.forEach(key => newSelected.delete(key));
-      } else {
-        currentPathFilesKeys.forEach(key => newSelected.add(key));
-      }
-    } else {
-      // Flat mode behavior
-      if (visibleOnly) {
-        const visibleKeys = currentFiles.map(f => `${f.filename}-${f.subfolder}-${f.type}`);
-        const allVisibleSelected = visibleKeys.every(key => selectedFiles.has(key));
-
-        if (allVisibleSelected) {
-          visibleKeys.forEach(key => newSelected.delete(key));
-        } else {
-          visibleKeys.forEach(key => newSelected.add(key));
-        }
-      } else {
-        const allFilesList = [...files.images, ...files.videos];
-        const allKeys = allFilesList.map(f => `${f.filename}-${f.subfolder}-${f.type}`);
-        allKeys.forEach(key => newSelected.add(key));
-      }
-    }
-
-    setSelectedFiles(newSelected);
-  };
-
-  const handleDeselectAll = () => {
-    setSelectedFiles(new Set());
   };
 
   const toggleSelectionMode = () => {
@@ -589,7 +571,7 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
     const filesToDelete: { filename: string; subfolder?: string; type: string }[] = [];
 
     // 1. Collect explicitly selected files
-    const allFilesFlat = [...files.images, ...files.videos];
+    const allFilesFlat = isSearching ? navigableFiles : [...files.images, ...files.videos];
     allItems.forEach(key => {
       if (!key.startsWith('folder:')) {
         const file = allFilesFlat.find(f => `${f.filename}-${f.subfolder}-${f.type}` === key);
@@ -619,9 +601,9 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
 
     if (filesToDelete.length === 0) return;
 
-    // 3. Find matching thumbnails for videos being deleted
+    // Outside search, retain the existing paired-thumbnail cleanup.
     const additionalThumbnails: { filename: string; subfolder?: string; type: string }[] = [];
-    filesToDelete.forEach(file => {
+    (isSearching ? [] : filesToDelete).forEach(file => {
       const isVideo = ['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(file.filename.split('.').pop()?.toLowerCase() || '');
       if (isVideo) {
         let videoName = file.filename.substring(0, file.filename.lastIndexOf('.'));
@@ -660,7 +642,7 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
   const handleMoveSelected = async (destinationType: 'input' | 'output' | 'temp') => {
     if (selectedFiles.size === 0) return;
 
-    const allFiles = [...files.images, ...files.videos];
+    const allFiles = isSearching ? navigableFiles : [...files.images, ...files.videos];
     const filesToMove = allFiles.filter(f =>
       selectedFiles.has(`${f.filename}-${f.subfolder}-${f.type}`)
     ).map(f => ({
@@ -693,7 +675,7 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
   const handleCopySelected = async (destinationType: 'input' | 'output' | 'temp') => {
     if (selectedFiles.size === 0) return;
 
-    const allFiles = [...files.images, ...files.videos];
+    const allFiles = isSearching ? navigableFiles : [...files.images, ...files.videos];
     const filesToCopy = allFiles.filter(f =>
       selectedFiles.has(`${f.filename}-${f.subfolder}-${f.type}`)
     ).map(f => ({
@@ -844,15 +826,54 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
     };
   }, [currentFiles, selectedSubfolder, imageLookupMap]);
 
-  // Files available for navigation in preview modal
+  // Preview navigation and bulk selection follow the same list as the UI.
   const navigableFiles = useMemo(() => {
+    if (searchTerm) {
+      const scope = viewMode === 'folders' && selectedSubfolder !== '/' ? selectedSubfolder : null;
+      return currentFiles.filter(file => {
+        // While a folder refresh is in flight, the previous listing may still be loaded.
+        if (activeFolder !== 'all' && file.type !== activeFolder) return false;
+        const subfolder = file.subfolder || '';
+        if (scope && subfolder !== scope && !subfolder.startsWith(scope + '/')) return false;
+        const path = subfolder && subfolder !== '/' ? `${subfolder}/${file.filename}` : file.filename;
+        return path.toLowerCase().includes(searchTerm);
+      });
+    }
     return viewMode === 'folders' ? folderContent.files : currentFiles;
-  }, [viewMode, folderContent.files, currentFiles]);
+  }, [activeFolder, viewMode, selectedSubfolder, folderContent.files, currentFiles, searchTerm]);
+
+  const selectionKeys = useMemo(() => navigableFiles.map(galleryFileKey), [navigableFiles]);
+  const searchKeys = useMemo(() => isSearching ? new Set(selectionKeys) : null, [isSearching, selectionKeys]);
+  const selectedFiles = useMemo(() => {
+    if (!searchKeys) return storedSelection;
+    return new Set([...storedSelection].filter(key => searchKeys.has(key)));
+  }, [searchKeys, storedSelection]);
+  useEffect(() => {
+    // Drop old hidden selections so clearing a filter won't resurrect them.
+    if (!searchKeys) return;
+    setSelectedFiles(previous => {
+      const visible = [...previous].filter(key => searchKeys.has(key));
+      return visible.length === previous.size ? previous : new Set(visible);
+    });
+  }, [searchKeys]);
+  const isAnyFolderSelected = useMemo(() => (
+    Array.from(selectedFiles).some(key => key.startsWith('folder:'))
+  ), [selectedFiles]);
+
+  const handleSelectAll = () => {
+    const next = new Set(selectedFiles);
+    const allVisibleSelected = selectionKeys.every(key => next.has(key));
+    selectionKeys.forEach(key => {
+      if (allVisibleSelected) next.delete(key);
+      else next.add(key);
+    });
+    setSelectedFiles(next);
+  };
 
   const totalFiles = files.images.length + files.videos.length;
 
   return (
-    <div className="fixed inset-0 overflow-y-auto overflow-x-hidden pt-safe pb-safe z-0" style={{ background: '#050608' }}>
+    <div ref={scrollRef} className="fixed inset-0 overflow-y-auto overflow-x-hidden pt-safe pb-safe z-0" style={{ background: '#050608' }}>
       {/* Immersive Fixed Header */}
       <header
         ref={headerRef}
@@ -884,6 +905,7 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
             <p className={`font-mono text-[9px] font-medium tracking-[0.14em] uppercase mt-[3px] truncate ${isSelectionMode ? 'text-[#7ba3f5]' : 'text-[#8a919e]'}`}>
               {isSelectionMode
                 ? `${selectedFiles.size} SELECTED`
+                : isSearching ? t('gallery.filesTotal', { count: navigableFiles.length })
                 : (viewMode === 'folders'
                   ? (selectedSubfolder && selectedSubfolder !== '/' ? selectedSubfolder : 'Root Folder')
                   : (activeFolder === 'all'
@@ -899,7 +921,10 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => setFileLayout(current => current === 'grid' ? 'list' : 'grid')}
+              onClick={() => {
+                if (fileLayout === 'list') closeSearch();
+                setFileLayout(fileLayout === 'grid' ? 'list' : 'grid');
+              }}
               className="w-9 h-9 flex items-center justify-center rounded-[10px] border border-white/10 text-[#c8ccd4] backdrop-blur-md transition-all active:scale-95"
               style={{ background: 'rgba(255,255,255,0.06)' }}
               title={t(fileLayout === 'grid' ? 'gallery.showFileList' : 'gallery.showThumbnails')}
@@ -907,6 +932,20 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
             >
               {fileLayout === 'grid' ? <List className="h-4 w-4" /> : <LayoutGrid className="h-4 w-4" />}
             </button>
+            {fileLayout === 'list' && (
+              <button
+                ref={searchButtonRef}
+                type="button"
+                onClick={() => searchOpen ? closeSearch() : setSearchOpen(true)}
+                className={`flex h-9 w-9 items-center justify-center rounded-[10px] border transition-all active:scale-95 ${searchOpen ? 'border-blue-400/50 bg-blue-500/20 text-blue-200' : 'border-white/10 bg-white/[0.06] text-[#c8ccd4]'}`}
+                title={t('gallery.searchFiles')}
+                aria-label={t('gallery.searchFiles')}
+                aria-expanded={searchOpen}
+                aria-controls={searchOpen ? searchId : undefined}
+              >
+                <Search className="h-4 w-4" />
+              </button>
+            )}
             {/* View Mode Toggle */}
             {!isSelectionMode && (!selectedSubfolder || selectedSubfolder === '/') && (
               <button
@@ -947,8 +986,9 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
                   initial={{ opacity: 0, scale: 0.5, x: 20 }}
                   animate={{ opacity: 1, scale: 1, x: 0 }}
                   exit={{ opacity: 0, scale: 0.5, x: 20 }}
-                  onClick={() => handleSelectAll(true)}
-                  className="h-9 px-3 flex items-center rounded-[10px] border border-white/10 text-[#c8ccd4] text-[11.5px] font-semibold whitespace-nowrap backdrop-blur-md transition-all active:scale-95"
+                  onClick={handleSelectAll}
+                  disabled={selectionKeys.length === 0}
+                  className="h-9 px-3 flex items-center rounded-[10px] border border-white/10 text-[#c8ccd4] text-[11.5px] font-semibold whitespace-nowrap backdrop-blur-md transition-all active:scale-95 disabled:opacity-35"
                   style={{ background: 'rgba(255,255,255,0.06)' }}
                   title={t('gallery.selectAll')}
                 >
@@ -973,6 +1013,45 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
             )}
           </div>
         </div>
+        {fileLayout === 'list' && searchOpen && (
+          <div id={searchId} role="search" className="relative px-3.5 pb-2 md:px-8 pointer-events-auto">
+            <div className="flex min-h-11 items-center gap-2 rounded-xl border border-white/15 bg-[#101217] px-3 focus-within:border-blue-400/70">
+              <Search className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+              <input
+                ref={searchInputRef}
+                type="search"
+                autoFocus
+                autoComplete="off"
+                spellCheck={false}
+                value={searchInput}
+                onChange={event => updateSearchInput(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key !== 'Escape' || event.nativeEvent.isComposing) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  closeSearch();
+                  searchButtonRef.current?.focus();
+                }}
+                placeholder={t('gallery.searchPlaceholder')}
+                aria-label={t('gallery.searchFiles')}
+                className="min-h-10 min-w-0 flex-1 bg-transparent text-base text-white outline-none placeholder:text-slate-400 select-text [&::-webkit-search-cancel-button]:hidden"
+              />
+              {searchInput && (
+                <button
+                  type="button"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-white/10"
+                  aria-label={t('common.clear')}
+                  onClick={() => {
+                    updateSearchInput('');
+                    searchInputRef.current?.focus();
+                  }}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </header>
       {/* Main Grid Content - Dynamic Padding (header height for overlap feel) */}
       <main
@@ -991,7 +1070,7 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
               {t('common.retry')}
             </Button>
           </div>
-        ) : currentFiles.length === 0 ? (
+        ) : currentFiles.length === 0 && !isSearching ? (
           <div className="text-center py-40">
             <ImageIcon className="h-16 w-16 text-white/10 mx-auto mb-6" />
             <p className="text-white/30 text-sm font-bold uppercase tracking-widest">{t('gallery.noFiles')}</p>
@@ -1001,7 +1080,7 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
             <AnimatePresence mode="wait">
               {fileLayout === 'list' ? (
                 <div key="filename-list" className="px-3.5 md:px-8 space-y-1">
-                  {viewMode === 'folders' && folderContent.folders.map(folder => {
+                  {!isSearching && viewMode === 'folders' && folderContent.folders.map(folder => {
                     const key = `folder:${folder.fullPath}`;
                     const selected = selectedFiles.has(key);
                     return (
@@ -1030,14 +1109,15 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
                       </button>
                     );
                   })}
-                  {(viewMode === 'folders' ? folderContent.files : currentFiles).map(file => {
-                    const key = `${file.filename}-${file.subfolder}-${file.type}`;
+                  {navigableFiles.map((file, index) => {
+                    const key = galleryFileKey(file);
                     const selected = selectedFiles.has(key);
                     const Icon = isVideoFile(file.filename) ? Video : ImageIcon;
                     return (
                       <button
                         type="button"
                         key={key}
+                        data-gallery-index={index}
                         aria-pressed={isSelectionMode ? selected : undefined}
                         onClick={() => isSelectionMode ? handleSelectionChange(file, !selected) : handleFileClick(file)}
                         className={`flex min-h-14 w-full items-center gap-3 rounded-xl border p-3 text-left ${selected ? 'border-blue-500 bg-blue-500/15' : 'border-white/10 bg-[#101217] hover:bg-white/10'}`}
@@ -1053,10 +1133,10 @@ export const OutputsGallery: React.FC<OutputsGalleryProps> = ({
                       </button>
                     );
                   })}
-                  {(viewMode === 'folders'
-                    ? folderContent.files.length === 0 && folderContent.folders.length === 0
-                    : currentFiles.length === 0) && (
-                    <p className="py-20 text-center text-sm text-slate-400">{t('gallery.noFiles')}</p>
+                  {navigableFiles.length === 0 && (isSearching || folderContent.folders.length === 0) && (
+                    <p className="py-20 text-center text-sm text-slate-400" role="status">
+                      {t(isSearching ? 'gallery.noSearchResults' : 'gallery.noFiles')}
+                    </p>
                   )}
                 </div>
               ) : viewMode === 'folders' ? (

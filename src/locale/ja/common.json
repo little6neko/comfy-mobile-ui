@@ -606,6 +606,9 @@
     },
     "gallery": {
         "showFileList": "ファイル名の一覧に切り替え",
+        "searchFiles": "ファイルを検索",
+        "searchPlaceholder": "ファイル名またはフォルダーで検索…",
+        "noSearchResults": "一致するファイルがありません",
         "showThumbnails": "サムネイル表示に切り替え",
         "title": "画像と動画",
         "selectFile": "ファイルを選択",

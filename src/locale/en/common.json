@@ -610,6 +610,9 @@
     },
     "gallery": {
         "showFileList": "Show filename list",
+        "searchFiles": "Search files",
+        "searchPlaceholder": "Search by filename or folder…",
+        "noSearchResults": "No matching files",
         "showThumbnails": "Show thumbnail previews",
         "title": "Image & Video",
         "selectFile": "Select File",
