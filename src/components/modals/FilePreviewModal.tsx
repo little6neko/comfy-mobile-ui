@@ -13,6 +13,7 @@ import { isImageFile } from '@/shared/utils/ComfyFileUtils';
 import { extractWorkflowFromPng } from '@/utils/pngMetadataExtractor';
 import type { IComfyJson } from '@/shared/types/app/IComfyJson';
 import { comfyAuthenticatedFetch } from '@/infrastructure/auth/ComfyAuthService';
+import { getMediaDownloadUrl } from '@/shared/utils/mediaDownload';
 
 interface FilePreviewModalProps {
   isOpen: boolean;
@@ -89,6 +90,47 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   const [fileType, setFileType] = useState(initialFileType);
   const [dimensions, setDimensions] = useState(initialDimensions);
   const [duration, setDuration] = useState(initialDuration);
+
+  const [compatibleUrl, setCompatibleUrl] = useState<string | null>(null);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState('');
+  const [conversionError, setConversionError] = useState('');
+  const previewRequest = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    previewRequest.current?.abort();
+    previewRequest.current = null;
+    setCompatibleUrl(null);
+    setVideoFailed(false);
+    setPreviewStatus('');
+    setConversionError('');
+    return () => { previewRequest.current?.abort(); };
+  }, [url, isOpen]);
+
+  const makeCompatiblePreview = async () => {
+    const file = files[currentIndex];
+    if (!comfyFileService || !file || previewRequest.current) return;
+    const controller = new AbortController();
+    previewRequest.current = controller;
+    setPreviewStatus('queued');
+    setConversionError('');
+    try {
+      const preview = await comfyFileService.prepareVideoPreview(file, controller.signal, setPreviewStatus);
+      if (!controller.signal.aborted) {
+        setCompatibleUrl(preview);
+        setVideoFailed(false);
+        setError(undefined);
+        setLoading(false);
+      }
+    } catch (err: any) {
+      if (!controller.signal.aborted) setConversionError(err.response?.data?.error || err.message);
+    } finally {
+      if (previewRequest.current === controller) {
+        previewRequest.current = null;
+        setPreviewStatus('');
+      }
+    }
+  };
 
   // Reset to initial when modal opens
   useEffect(() => {
@@ -278,8 +320,11 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
         : 'media.failedToDisplayVideo'
     );
     setLoading(false);
-    setError(message);
-    onMediaError?.(message);
+    setVideoFailed(true);
+    if (isVhsPathPreview || !comfyFileService || !files[currentIndex]) {
+      setError(message);
+      onMediaError?.(message);
+    }
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -310,18 +355,15 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
 
     setIsDownloading(true);
     try {
-      // Create a hidden link and trigger download directly via browser
-      // This avoids loading the entire file into memory (Blob)
-      const link = document.body.appendChild(document.createElement('a'));
-
-      // Add download attribute to suggest filename
+      // The server sends Content-Disposition: attachment, including across origins.
+      // Keep this navigation synchronous with the tap; do not buffer videos in a Blob.
+      const downloadUrl = getMediaDownloadUrl(url, window.location.href);
+      const link = document.createElement('a');
       link.download = filename;
-      link.href = url;
-
-      // Important: for many browsers, cross-origin download attribute doesn't work 
-      // without server headers. But simple link navigation is safer for memory.
-      link.click();
-      link.remove();
+      link.href = downloadUrl;
+      link.referrerPolicy = 'no-referrer';
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); }
 
       toast.success(t('media.downloadStarted'), {
         description: t('media.downloadStartedDesc', { filename }),
@@ -512,6 +554,18 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
             )}
           </AnimatePresence>
 
+          {!isImage && comfyFileService && files[currentIndex] && (videoFailed || error || /\.mkv$/i.test(filename) || compatibleUrl) && (
+            <div className="px-4 py-3 bg-[#10141c] text-xs text-white/75 border-t border-white/10">
+              {compatibleUrl && !videoFailed ? <p>{t('media.compatiblePreviewReady')}</p> : (
+                <Button onClick={makeCompatiblePreview} disabled={Boolean(previewStatus)} className="gap-2 bg-[#3069f0] text-white">
+                  {previewStatus && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {t(previewStatus ? 'media.compatiblePreviewPreparing' : 'media.makeCompatiblePreview')}
+                </Button>
+              )}
+              {videoFailed && <p className="mt-2">{t('media.failedToDisplayVideo')}</p>}
+              {conversionError && <p role="alert" className="mt-2 text-red-400">{conversionError}</p>}
+            </div>
+          )}
           {/* Content Area - No Padding for Full Experience */}
           <div className="flex-1 relative overflow-hidden flex flex-col min-h-0 bg-black/20">
             {/* Loading Overlay */}
@@ -580,13 +634,15 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                     </TransformWrapper>
                   ) : (
                     <video
-                      src={`${url}#t=0.001`}
+                      key={compatibleUrl || url}
+                      src={`${compatibleUrl || url}#t=0.001`}
+                      playsInline
                       controls
                       preload="auto"
                       className="max-w-full max-h-full object-contain"
                       onLoadedData={() => setLoading(false)}
                       onError={handleVideoError}
-                      {...(isCompact ? { playsInline: true, "webkit-playsinline": "true" } : {})}
+                      {...(isCompact ? { "webkit-playsinline": "true" } : {})}
                     >
                       {t('media.videoNotSupported')}
                     </video>

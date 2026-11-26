@@ -7,16 +7,36 @@ import sys
 from typing import Dict, Any, Optional
 from aiohttp import web
 import folder_paths
-from ..utils.download_video import download_video_async
+from ..utils.download_video import download_video_async, probe_video_formats, validate_url, validate_user_agent, validate_impersonate, get_impersonate_targets, FormatError
 from ..utils.video_thumbnail import generate_video_thumbnail_async
 
+async def get_video_formats(request):
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError('Expected a JSON object.')
+        url = validate_url(data.get('url'))
+        user_agent = validate_user_agent(data.get('user_agent'))
+        impersonate = validate_impersonate(data.get('impersonate'))
+        result = await probe_video_formats(url, user_agent=user_agent, impersonate=impersonate)
+        # Do not expose signed media URLs or internal format selector expressions.
+        result['formats'] = [{k: v for k, v in f.items() if k != 'selector'} for f in reversed(result['formats'])]
+        return web.json_response({'success': True, **result})
+    except (ValueError, TypeError) as error:
+        return web.json_response({'success': False, 'error': str(error)}, status=400)
+    except asyncio.TimeoutError:
+        return web.json_response({'success': False, 'error': 'Video inspection timed out. Please retry.'}, status=504)
+    except Exception:
+        return web.json_response({'success': False, 'error': 'Could not inspect video formats. Check yt-dlp installation.'}, status=502)
+
+
 async def download_youtube_video(request):
-    """Download a YouTube video to the ComfyUI input directory"""
+    """Download a video to the ComfyUI input directory using a current format."""
     try:
         data = await request.json()
 
         # Validate required parameters
-        if 'url' not in data:
+        if not isinstance(data, dict) or 'url' not in data:
             return web.json_response({
                 "success": False,
                 "error": "Missing required field: url"
@@ -25,12 +45,17 @@ async def download_youtube_video(request):
         url = data['url']
         filename = data.get('filename')  # Optional custom filename
         subfolder = data.get('subfolder', '')  # Optional subfolder within input directory
+        try:
+            user_agent = validate_user_agent(data.get('user_agent'))
+            impersonate = validate_impersonate(data.get('impersonate'))
+        except ValueError as error:
+            return web.json_response({'success': False, 'error': str(error)}, status=400)
 
         # Validate URL format
         import urllib.parse
         try:
             parsed_url = urllib.parse.urlparse(url)
-            if not parsed_url.scheme or not parsed_url.netloc:
+            if parsed_url.scheme not in ('http', 'https') or not parsed_url.hostname:
                 return web.json_response({
                     "success": False,
                     "error": "Invalid URL format"
@@ -44,11 +69,15 @@ async def download_youtube_video(request):
         # Get ComfyUI input directory
         input_path = folder_paths.get_input_directory()
 
-        # Build target directory path
-        if subfolder:
-            target_dir = os.path.join(input_path, subfolder)
-        else:
-            target_dir = input_path
+        if not isinstance(subfolder, str):
+            return web.json_response({'success': False, 'error': 'Invalid subfolder.'}, status=400)
+        input_path = os.path.realpath(input_path)
+        target_dir = os.path.realpath(os.path.join(input_path, subfolder))
+        try:
+            if os.path.commonpath([input_path, target_dir]) != input_path:
+                raise ValueError()
+        except ValueError:
+            return web.json_response({'success': False, 'error': 'Subfolder must be inside the input directory.'}, status=400)
 
         # Ensure target directory exists
         os.makedirs(target_dir, exist_ok=True)
@@ -62,7 +91,7 @@ async def download_youtube_video(request):
             print(message)
 
         # Download video using the async function
-        result = await download_video_async(url, target_dir, filename, progress_callback)
+        result = await download_video_async(url, target_dir, filename, progress_callback, format_id=data.get('format_id', 'auto'), user_agent=user_agent, impersonate=impersonate)
 
         if result["success"]:
             # Wait a brief moment for file system to fully complete the merge process
@@ -71,53 +100,7 @@ async def download_youtube_video(request):
             video_path = None
             thumbnail_info = None
 
-            # Try to find the actual video file path
-            if downloaded_file:
-                video_path = os.path.join(target_dir, downloaded_file)
-                print(f"🔍 Looking for video file: {video_path}")
-
-                if os.path.exists(video_path):
-                    print(f"✅ Found video file at expected path: {video_path}")
-                else:
-                    print(f"❌ Video file not found at expected path: {video_path}")
-                    # Try without directory if it's already a full path
-                    if os.path.exists(downloaded_file):
-                        video_path = downloaded_file
-                        print(f"✅ Found video file as full path: {video_path}")
-                    else:
-                        print(f"🔍 Searching for video files in directory: {target_dir}")
-                        # Search for the most recently modified video file in the directory
-                        video_files = [f for f in os.listdir(target_dir)
-                                     if f.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
-
-                        if video_files:
-                            # Sort by modification time, most recent first
-                            video_files.sort(key=lambda x: os.path.getmtime(os.path.join(target_dir, x)), reverse=True)
-                            downloaded_file = video_files[0]  # Get most recent
-                            video_path = os.path.join(target_dir, downloaded_file)
-                            print(f"✅ Found most recent video file: {downloaded_file}")
-                        else:
-                            video_path = None
-                            print(f"❌ No video files found in directory")
-            else:
-                print(f"⚠️ No downloaded_file returned from download_video_async, searching directory...")
-                # If no filename was returned, search for most recent video file
-                try:
-                    video_files = [f for f in os.listdir(target_dir)
-                                 if f.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
-
-                    if video_files:
-                        # Sort by modification time, most recent first
-                        video_files.sort(key=lambda x: os.path.getmtime(os.path.join(target_dir, x)), reverse=True)
-                        downloaded_file = video_files[0]  # Get most recent
-                        video_path = os.path.join(target_dir, downloaded_file)
-                        print(f"✅ Found most recent video file: {downloaded_file}")
-                    else:
-                        video_path = None
-                        print(f"❌ No video files found in directory")
-                except Exception as e:
-                    video_path = None
-                    print(f"❌ Error searching directory: {e}")
+            video_path = result.get('video_path')
 
             # Generate thumbnail if video file was found
             if video_path and os.path.exists(video_path):
@@ -220,6 +203,14 @@ async def get_video_download_status(request):
             yt_dlp_version = None
             yt_dlp_available = False
 
+        impersonate_targets = []
+        impersonate_error = None
+        if yt_dlp_available:
+            try:
+                impersonate_targets = await get_impersonate_targets()
+            except (FormatError, asyncio.TimeoutError, OSError):
+                impersonate_error = 'Could not list impersonation targets. Update yt-dlp and check curl_cffi.'
+
         # Check if FFmpeg is available for thumbnail generation
         try:
             result = subprocess.run(['ffmpeg', '-version'],
@@ -240,6 +231,8 @@ async def get_video_download_status(request):
             "status": {
                 "yt_dlp_available": yt_dlp_available,
                 "yt_dlp_version": yt_dlp_version,
+                "impersonate_targets": impersonate_targets,
+                "impersonate_error": impersonate_error,
                 "ffmpeg_available": ffmpeg_available,
                 "ffmpeg_version": ffmpeg_version,
                 "thumbnail_generation_available": ffmpeg_available,

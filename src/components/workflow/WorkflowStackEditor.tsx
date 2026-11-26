@@ -153,7 +153,7 @@ const StackNode: React.FC<StackNodeProps> = ({ node, workflowId, widgetEditor, o
             }
         }
         return [];
-    }, [node]);
+    }, [node, node.dynamicRevision]);
 
     const currentMode = (node as any)?.mode || 0;
     const isMuted = currentMode === 2;

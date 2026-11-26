@@ -19,6 +19,8 @@ import sys
 try:
     from .handlers.workflow_handler import *
     from .handlers.file_handler import *
+    from .handlers.media_download_handler import download_media
+    from .handlers.video_preview_handler import generate_video_thumbnail, start_video_preview, video_preview_status, serve_video_preview
     from .handlers.model_handler import *
     from .handlers.download_handler import *
     from .handlers.lora_handler import *
@@ -109,6 +111,11 @@ def setup_routes():
                 app.router.add_get('/comfymobile/api/files/list', list_all_files)
                 app.router.add_get('/comfymobile/api/files/list/{folder_type}', list_files_by_type)
                 app.router.add_get('/comfymobile/api/files/view', view_thumbnail)
+                app.router.add_get('/comfymobile/api/files/download', download_media)
+                app.router.add_post('/comfymobile/api/videos/thumbnail', generate_video_thumbnail)
+                app.router.add_post('/comfymobile/api/videos/preview', start_video_preview)
+                app.router.add_get('/comfymobile/api/videos/preview/{key}/status', video_preview_status)
+                app.router.add_get('/comfymobile/api/videos/preview/{key}/file', serve_video_preview)
 
                 # Lightweight execution-history list (strips per-entry workflow)
                 app.router.add_get('/comfymobile/api/history/list', get_history_list)
@@ -180,6 +187,7 @@ def setup_routes():
                 app.router.add_post('/comfymobile/api/manager/queue/install', manager_queue_install)
 
                 # Video download routes
+                app.router.add_post('/comfymobile/api/videos/formats', get_video_formats)
                 app.router.add_post('/comfymobile/api/videos/download', download_youtube_video)
                 app.router.add_get('/comfymobile/api/videos/download/status', get_video_download_status)
                 app.router.add_post('/comfymobile/api/logs/subscribe', subscribe_to_logs)
@@ -235,6 +243,11 @@ def setup_routes():
             
             # Basic file routes
             routes.get('/comfymobile/api/files/list')(list_all_files)
+            routes.get('/comfymobile/api/files/download')(download_media)
+            routes.post('/comfymobile/api/videos/thumbnail')(generate_video_thumbnail)
+            routes.post('/comfymobile/api/videos/preview')(start_video_preview)
+            routes.get('/comfymobile/api/videos/preview/{key}/status')(video_preview_status)
+            routes.get('/comfymobile/api/videos/preview/{key}/file')(serve_video_preview)
             routes.get('/comfymobile/api/files/list/{folder_type}')(list_files_by_type)
             
             # Widget type routes
@@ -264,6 +277,11 @@ def setup_routes():
                 # Basic routes only for unknown server configurations
                 attr.router.add_get('/comfymobile/ws', global_websocket_handler)
                 attr.router.add_get('/comfymobile/api/status', api_status)
+                attr.router.add_get('/comfymobile/api/files/download', download_media)
+                attr.router.add_post('/comfymobile/api/videos/thumbnail', generate_video_thumbnail)
+                attr.router.add_post('/comfymobile/api/videos/preview', start_video_preview)
+                attr.router.add_get('/comfymobile/api/videos/preview/{key}/status', video_preview_status)
+                attr.router.add_get('/comfymobile/api/videos/preview/{key}/file', serve_video_preview)
                 attr.router.add_get('/comfymobile/api/workflows/list', list_workflows)
                 attr.router.add_post('/comfymobile/api/reboot', reboot_server)
                 attr.router.add_post('/comfymobile/api/translate', translate_text)
